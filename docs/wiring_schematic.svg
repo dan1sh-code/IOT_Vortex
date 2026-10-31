@@ -1,0 +1,263 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 850" width="100%" height="100%">
+  <defs>
+    <style>
+      .bg { fill: #0b1120; }
+      .grid { stroke: rgba(56, 189, 248, 0.08); stroke-width: 1; }
+      .card { fill: #1e293b; stroke: #38bdf8; stroke-width: 2; rx: 8; }
+      .card-esp { fill: #0f172a; stroke: #00f3ff; stroke-width: 2.5; rx: 10; }
+      .card-psu { fill: #1c1917; stroke: #f97316; stroke-width: 2; rx: 8; }
+      .card-servo { fill: #1e1b4b; stroke: #818cf8; stroke-width: 1.5; rx: 6; }
+      .card-sensor { fill: #064e3b; stroke: #34d399; stroke-width: 1.5; rx: 6; }
+      .card-pir { fill: #4c0519; stroke: #fb7185; stroke-width: 1.5; rx: 6; }
+      .card-resistor { fill: #78350f; stroke: #fbbf24; stroke-width: 1.5; rx: 4; }
+      .text-title { font-family: 'Segoe UI', Arial, sans-serif; font-size: 20px; font-weight: 700; fill: #00f3ff; }
+      .text-sub { font-family: 'Segoe UI', Arial, sans-serif; font-size: 12px; fill: #94a3b8; }
+      .text-bold { font-family: 'Consolas', monospace; font-size: 13px; font-weight: 700; fill: #ffffff; }
+      .text-pin { font-family: 'Consolas', monospace; font-size: 11px; fill: #38bdf8; }
+      .text-vcc { font-family: 'Consolas', monospace; font-size: 11px; fill: #ef4444; font-weight: 700; }
+      .text-gnd { font-family: 'Consolas', monospace; font-size: 11px; fill: #94a3b8; font-weight: 700; }
+      .wire-5v { stroke: #ef4444; stroke-width: 3; fill: none; stroke-linecap: round; }
+      .wire-gnd { stroke: #475569; stroke-width: 3; fill: none; stroke-linecap: round; }
+      .wire-sig { stroke: #eab308; stroke-width: 2.5; fill: none; stroke-linecap: round; }
+      .wire-comm { stroke: #00f3ff; stroke-width: 2.5; fill: none; stroke-linecap: round; }
+      .wire-pir { stroke: #f43f5e; stroke-width: 2.5; fill: none; stroke-linecap: round; }
+      .junction { fill: #00f3ff; }
+    </style>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1100" height="850" class="bg"/>
+  
+  <!-- Grid Lines -->
+  <g class="grid">
+    <path d="M 0,100 L 1100,100 M 0,200 L 1100,200 M 0,300 L 1100,300 M 0,400 L 1100,400 M 0,500 L 1100,500 M 0,600 L 1100,600 M 0,700 L 1100,700 M 0,800 L 1100,800"/>
+    <path d="M 100,0 L 100,850 M 200,0 L 200,850 M 300,0 L 300,850 M 400,0 L 400,850 M 500,0 L 500,850 M 600,0 L 600,850 M 700,0 L 700,850 M 800,0 L 800,850 M 900,0 L 900,850 M 1000,0 L 1000,850"/>
+  </g>
+
+  <!-- Title Header -->
+  <text x="40" y="45" class="text-title">DIAGRAM PENGKABELAN RESMI // ROBOT VORTEX-X (ESP32)</text>
+  <text x="40" y="68" class="text-sub">Rangkaian 8 Servo SG90, Sensor HC-SR04 (Voltage Divider), DHT11, PIR HC-SR501 & Buzzer</text>
+
+  <!-- 1. POWER SUPPLY MODULE (EXTERNAL 5V 5A BUCK CONVERTER) -->
+  <g transform="translate(40, 110)">
+    <rect width="180" height="150" class="card-psu"/>
+    <text x="90" y="30" class="text-bold" text-anchor="middle" fill="#f97316">POWER MODULE</text>
+    <text x="90" y="48" class="text-sub" text-anchor="middle">Step-Down 5V 5A (LM2596/XL4015)</text>
+    
+    <rect x="15" y="65" width="60" height="25" rx="3" fill="#292524"/>
+    <text x="45" y="82" class="text-sub" text-anchor="middle">BAT 7.4V IN</text>
+
+    <!-- Rail 5V Out -->
+    <circle cx="150" cy="80" r="6" fill="#ef4444"/>
+    <text x="140" y="84" class="text-vcc" text-anchor="end">+5V OUT</text>
+    
+    <!-- Rail GND Out -->
+    <circle cx="150" cy="115" r="6" fill="#475569"/>
+    <text x="140" y="119" class="text-gnd" text-anchor="end">GND OUT</text>
+  </g>
+
+  <!-- 2. POWER DISTRIBUTION RAILS (BUS BAR) -->
+  <!-- 5V Bus -->
+  <line x1="220" y1="190" x2="360" y2="190" class="wire-5v"/>
+  <line x1="360" y1="190" x2="360" y2="780" class="wire-5v"/>
+  <text x="370" y="210" class="text-vcc">JALUR 5V SERVO</text>
+
+  <!-- GND Bus -->
+  <line x1="220" y1="225" x2="330" y2="225" class="wire-gnd"/>
+  <line x1="330" y1="225" x2="330" y2="780" class="wire-gnd"/>
+  <text x="260" y="245" class="text-gnd">COMMON GND</text>
+
+  <!-- Common Ground Connection to ESP32 -->
+  <line x1="330" y1="360" x2="440" y2="360" class="wire-gnd"/>
+  <circle cx="330" cy="360" r="5" fill="#475569"/>
+
+  <!-- 3. ESP32 DEVKIT V1 (CENTER UNIT) -->
+  <g transform="translate(440, 110)">
+    <rect width="250" height="420" class="card-esp"/>
+    <text x="125" y="32" class="text-bold" text-anchor="middle" fill="#00f3ff">ESP32 DevKit V1</text>
+    <text x="125" y="48" class="text-sub" text-anchor="middle">30-Pin Microcontroller Unit</text>
+
+    <!-- Micro USB Port -->
+    <rect x="95" y="395" width="60" height="25" rx="3" fill="#334155" stroke="#64748b"/>
+    <text x="125" y="412" class="text-sub" text-anchor="middle">USB 5V</text>
+
+    <!-- Left Pins Column -->
+    <text x="15" y="80" class="text-pin">VIN (5V)</text>
+    <text x="15" y="110" class="text-gnd">GND</text>
+    <text x="15" y="140" class="text-pin">GPIO13 [FL Hip]</text>
+    <text x="15" y="170" class="text-pin">GPIO14 [FL Lift]</text>
+    <text x="15" y="200" class="text-pin">GPIO16 [FR Hip]</text>
+    <text x="15" y="230" class="text-pin">GPIO17 [FR Lift]</text>
+    <text x="15" y="260" class="text-pin">GPIO18 [RL Hip]</text>
+    <text x="15" y="290" class="text-pin">GPIO19 [RL Lift]</text>
+    <text x="15" y="320" class="text-pin">GPIO21 [RR Hip]</text>
+    <text x="15" y="350" class="text-pin">GPIO22 [RR Lift]</text>
+
+    <!-- Right Pins Column -->
+    <text x="235" y="80" class="text-pin" text-anchor="end">3V3</text>
+    <text x="235" y="110" class="text-gnd" text-anchor="end">GND</text>
+    <text x="235" y="140" class="text-pin" text-anchor="end">GPIO23 [TRIG]</text>
+    <text x="235" y="170" class="text-pin" text-anchor="end">GPIO32 [ECHO Div]</text>
+    <text x="235" y="200" class="text-pin" text-anchor="end">GPIO4  [DHT11]</text>
+    <text x="235" y="230" class="text-pin" text-anchor="end" fill="#f43f5e" font-weight="700">GPIO27 [PIR OUT]</text>
+    <text x="235" y="260" class="text-pin" text-anchor="end">GPIO25 [Buzzer]</text>
+  </g>
+
+  <!-- 4. 8 SERVO SG90 UNITS (LEFT SIDE) -->
+  <!-- Servo FL Hip -->
+  <g transform="translate(40, 280)">
+    <rect width="180" height="45" class="card-servo"/>
+    <text x="12" y="22" class="text-bold" fill="#a5b4fc">1. Servo FL Hip</text>
+    <text x="12" y="38" class="text-sub">GPIO13 | Ayun Depan-Kiri</text>
+    <circle cx="170" cy="15" r="4" fill="#eab308"/>
+    <circle cx="170" cy="27" r="4" fill="#ef4444"/>
+    <circle cx="170" cy="39" r="4" fill="#475569"/>
+  </g>
+  <line x1="210" y1="295" x2="440" y2="250" class="wire-sig"/>
+
+  <!-- Servo FL Lift -->
+  <g transform="translate(40, 335)">
+    <rect width="180" height="45" class="card-servo"/>
+    <text x="12" y="22" class="text-bold" fill="#a5b4fc">2. Servo FL Lift</text>
+    <text x="12" y="38" class="text-sub">GPIO14 | Angkat Depan-Kiri</text>
+  </g>
+  <line x1="220" y1="355" x2="440" y2="280" class="wire-sig"/>
+
+  <!-- Servo FR Hip -->
+  <g transform="translate(40, 390)">
+    <rect width="180" height="45" class="card-servo"/>
+    <text x="12" y="22" class="text-bold" fill="#a5b4fc">3. Servo FR Hip</text>
+    <text x="12" y="38" class="text-sub">GPIO16 | Ayun Depan-Kanan</text>
+  </g>
+  <line x1="220" y1="410" x2="440" y2="310" class="wire-sig"/>
+
+  <!-- Servo FR Lift -->
+  <g transform="translate(40, 445)">
+    <rect width="180" height="45" class="card-servo"/>
+    <text x="12" y="22" class="text-bold" fill="#a5b4fc">4. Servo FR Lift</text>
+    <text x="12" y="38" class="text-sub">GPIO17 | Angkat Depan-Kanan</text>
+  </g>
+  <line x1="220" y1="465" x2="440" y2="340" class="wire-sig"/>
+
+  <!-- Servo RL Hip -->
+  <g transform="translate(40, 500)">
+    <rect width="180" height="45" class="card-servo"/>
+    <text x="12" y="22" class="text-bold" fill="#a5b4fc">5. Servo RL Hip</text>
+    <text x="12" y="38" class="text-sub">GPIO18 | Ayun Blkg-Kiri</text>
+  </g>
+  <line x1="220" y1="520" x2="440" y2="370" class="wire-sig"/>
+
+  <!-- Servo RL Lift -->
+  <g transform="translate(40, 555)">
+    <rect width="180" height="45" class="card-servo"/>
+    <text x="12" y="22" class="text-bold" fill="#a5b4fc">6. Servo RL Lift</text>
+    <text x="12" y="38" class="text-sub">GPIO19 | Angkat Blkg-Kiri</text>
+  </g>
+  <line x1="220" y1="575" x2="440" y2="400" class="wire-sig"/>
+
+  <!-- Servo RR Hip -->
+  <g transform="translate(40, 610)">
+    <rect width="180" height="45" class="card-servo"/>
+    <text x="12" y="22" class="text-bold" fill="#a5b4fc">7. Servo RR Hip</text>
+    <text x="12" y="38" class="text-sub">GPIO21 | Ayun Blkg-Kanan</text>
+  </g>
+  <line x1="220" y1="630" x2="440" y2="430" class="wire-sig"/>
+
+  <!-- Servo RR Lift -->
+  <g transform="translate(40, 665)">
+    <rect width="180" height="45" class="card-servo"/>
+    <text x="12" y="22" class="text-bold" fill="#a5b4fc">8. Servo RR Lift</text>
+    <text x="12" y="38" class="text-sub">GPIO22 | Angkat Blkg-Kanan</text>
+  </g>
+  <line x1="220" y1="685" x2="440" y2="460" class="wire-sig"/>
+
+  <!-- 5. RIGHT SIDE SENSORS -->
+
+  <!-- A. HC-SR04 ULTRASONIC SENSOR + VOLTAGE DIVIDER -->
+  <g transform="translate(800, 110)">
+    <rect width="260" height="135" class="card-sensor"/>
+    <text x="130" y="28" class="text-bold" text-anchor="middle" fill="#6ee7b7">HC-SR04 Ultrasonik</text>
+    <text x="130" y="45" class="text-sub" text-anchor="middle">Sensor Jarak Halangan Depan</text>
+    
+    <text x="20" y="70" class="text-vcc">VCC (5V)</text>
+    <text x="20" y="90" class="text-pin">TRIG (G23)</text>
+    <text x="20" y="110" class="text-pin" fill="#fbbf24">ECHO (5V OUT)</text>
+    <text x="20" y="128" class="text-gnd">GND</text>
+  </g>
+  <!-- TRIG Wire -->
+  <line x1="800" y1="200" x2="690" y2="250" class="wire-comm"/>
+
+  <!-- VOLTAGE DIVIDER RESISTORS -->
+  <g transform="translate(730, 210)">
+    <rect width="55" height="25" class="card-resistor"/>
+    <text x="27" y="17" class="text-sub" text-anchor="middle" fill="#fff">R1 1kΩ</text>
+  </g>
+  <g transform="translate(730, 245)">
+    <rect width="55" height="25" class="card-resistor"/>
+    <text x="27" y="17" class="text-sub" text-anchor="middle" fill="#fff">R2 2kΩ</text>
+  </g>
+  <!-- ECHO into Divider and out to GPIO32 -->
+  <line x1="800" y1="220" x2="785" y2="220" class="wire-sig"/>
+  <line x1="730" y1="222" x2="690" y2="280" class="wire-sig"/>
+  <circle cx="730" cy="222" r="4" fill="#fbbf24"/>
+  <line x1="730" y1="270" x2="710" y2="270" class="wire-gnd"/>
+  <text x="705" y="295" class="text-sub" fill="#38bdf8">GPIO32 (3.3V Safe)</text>
+
+  <!-- B. SENSOR PIR HC-SR501 / AM312 (MOTION / INTRUSION) -->
+  <g transform="translate(800, 275)">
+    <rect width="260" height="120" class="card-pir"/>
+    <text x="130" y="28" class="text-bold" text-anchor="middle" fill="#fb7185">SENSOR PIR GERAKAN</text>
+    <text x="130" y="45" class="text-sub" text-anchor="middle">HC-SR501 / Mini AM312</text>
+    
+    <text x="20" y="70" class="text-vcc">VCC (5V atau 3.3V)</text>
+    <text x="20" y="90" class="text-pin" fill="#f43f5e" font-weight="700">OUT (Logika 3.3V) -> GPIO27</text>
+    <text x="20" y="110" class="text-gnd">GND</text>
+  </g>
+  <!-- PIR OUT to GPIO27 Wire -->
+  <line x1="800" y1="365" x2="690" y2="340" class="wire-pir"/>
+  <circle cx="800" cy="365" r="4" fill="#f43f5e"/>
+
+  <!-- C. DHT11 CLIMATE SENSOR -->
+  <g transform="translate(800, 420)">
+    <rect width="260" height="110" class="card-sensor"/>
+    <text x="130" y="28" class="text-bold" text-anchor="middle" fill="#38bdf8">DHT11 SENSOR</text>
+    <text x="130" y="45" class="text-sub" text-anchor="middle">Suhu &amp; Kelembapan Lingkungan</text>
+    
+    <text x="20" y="68" class="text-vcc" fill="#38bdf8">VCC (3.3V)</text>
+    <text x="20" y="86" class="text-pin">DATA -> GPIO4</text>
+    <text x="20" y="102" class="text-gnd">GND</text>
+  </g>
+  <line x1="800" y1="505" x2="690" y2="310" class="wire-comm"/>
+
+  <!-- D. BUZZER ALARM -->
+  <g transform="translate(800, 555)">
+    <rect width="260" height="95" class="card"/>
+    <text x="130" y="28" class="text-bold" text-anchor="middle" fill="#e2e8f0">BUZZER PIEZO 5V</text>
+    <text x="130" y="45" class="text-sub" text-anchor="middle">Indikator Suara &amp; Alarm Rintangan</text>
+    
+    <text x="20" y="70" class="text-pin">I/O (+) -> GPIO25</text>
+    <text x="20" y="88" class="text-gnd">GND (-)</text>
+  </g>
+  <line x1="800" y1="625" x2="690" y2="370" class="wire-sig"/>
+
+  <!-- LEGEND BOX -->
+  <g transform="translate(440, 560)">
+    <rect width="320" height="190" rx="8" fill="#0f172a" stroke="#334155" stroke-width="1.5"/>
+    <text x="160" y="26" class="text-bold" text-anchor="middle" fill="#38bdf8">PANDUAN WARNA KABEL</text>
+    
+    <line x1="25" y1="50" x2="65" y2="50" class="wire-5v"/>
+    <text x="80" y="54" class="text-sub">Merah: Jalur Daya Positif (+5V)</text>
+
+    <line x1="25" y1="80" x2="65" y2="80" class="wire-gnd"/>
+    <text x="80" y="84" class="text-sub">Hitam / Abu: Jalur Ground Bersama (GND)</text>
+
+    <line x1="25" y1="110" x2="65" y2="110" class="wire-sig"/>
+    <text x="80" y="114" class="text-sub">Kuning / Oranye: Sinyal PWM Servo (GPIO)</text>
+
+    <line x1="25" y1="140" x2="65" y2="140" class="wire-comm"/>
+    <text x="80" y="144" class="text-sub">Biru: Sinyal Sensor Ultrasonik &amp; DHT11</text>
+
+    <line x1="25" y1="170" x2="65" y2="170" class="wire-pir"/>
+    <text x="80" y="174" class="text-sub">Pink / Merah Muda: Sinyal Digital OUT PIR (GPIO27)</text>
+  </g>
+</svg>
