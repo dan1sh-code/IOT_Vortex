@@ -717,7 +717,7 @@
   function onPirIntruderAlert() {
     el.pirCard.classList.add('motion-detected');
     el.pirStatusText.textContent = 'PERINGATAN: GERAKAN TERDETEKSI!';
-    el.pirRawBadge.textContent = 'LOGIK: 1 (HIGH)';
+    el.pirRawBadge.textContent = '1';
     el.svgPirIndicator.setAttribute('fill', '#ff2a55');
     el.svgPirIndicator.setAttribute('r', '11');
 
@@ -746,8 +746,8 @@
 
   function resetPirVisual() {
     el.pirCard.classList.remove('motion-detected');
-    el.pirStatusText.textContent = 'STANDBY // TIDAK ADA GERAK';
-    el.pirRawBadge.textContent = 'LOGIK: 0 (LOW)';
+    el.pirStatusText.textContent = 'STANDBY // AREA AMAN';
+    el.pirRawBadge.textContent = '0';
     el.svgPirIndicator.setAttribute('fill', '#ff2a55');
     el.svgPirIndicator.setAttribute('r', '8');
 
@@ -989,6 +989,86 @@
     });
 
     el.btnExportLog.addEventListener('click', exportCsv);
+
+    // Sidebar Toggle
+    const sidebar = document.getElementById('sidebar');
+    const sidebarToggle = document.getElementById('sidebarToggle');
+    if (sidebarToggle && sidebar) {
+      sidebarToggle.addEventListener('click', () => {
+        sidebar.classList.toggle('collapsed');
+        sfx.click();
+      });
+    }
+
+    // Navigation Pills Smooth Scrolling & Active State
+    const navPills = document.querySelectorAll('.sidebar-nav .nav-pill');
+    navPills.forEach(pill => {
+      pill.addEventListener('click', (e) => {
+        if (pill.id === 'btnOpenWiring') return; // Handled separately
+        e.preventDefault();
+        navPills.forEach(p => p.classList.remove('active'));
+        pill.classList.add('active');
+
+        const navTarget = pill.getAttribute('data-nav');
+        const targetMap = {
+          'dashboard': 'secHero',
+          'sensors': 'secMiddle',
+          'control': 'secRobot',
+          'gamepad': 'secGamepad',
+          'logs': 'secLogs'
+        };
+
+        const targetEl = document.getElementById(targetMap[navTarget]);
+        if (targetEl) {
+          targetEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+        sfx.click();
+      });
+    });
+
+    // Test PIR Alert Button
+    const btnTestPirAlert = document.getElementById('btnTestPirAlert');
+    if (btnTestPirAlert) {
+      btnTestPirAlert.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (state.telemetry.pirState === 0) {
+          state.telemetry.pirState = 1;
+          onPirIntruderAlert();
+          setTimeout(() => {
+            state.telemetry.pirState = 0;
+            resetPirVisual();
+          }, 4500);
+        }
+      });
+    }
+
+    // Global Command Search Input
+    const globalSearchInput = document.getElementById('globalSearchInput');
+    if (globalSearchInput) {
+      globalSearchInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          const query = globalSearchInput.value.trim().toUpperCase();
+          if (query === 'STAND' || query === 'BERDIRI') { sendCommand('STAND'); sfx.action(); }
+          else if (query === 'CROUCH' || query === 'MERUNDUK') { sendCommand('CROUCH'); sfx.action(); }
+          else if (query === 'WAVE') { sendCommand('WAVE'); sfx.action(); }
+          else if (query === 'PATROL' || query === 'PATROLI') { sendCommand('FORWARD'); sfx.action(); }
+          else if (query === 'STOP' || query === 'ESTOP') { sendCommand('STOP'); sfx.estop(); }
+          else if (query === 'WIRING') { document.getElementById('wiringModal').style.display = 'flex'; }
+          else {
+            addLog(`Pencarian perintah: [${query}] - Coba STAND, CROUCH, WAVE, PATROL, STOP`, 'SYS');
+          }
+          globalSearchInput.value = '';
+        }
+      });
+
+      // Keyboard shortcut ⌘K / Ctrl+K
+      window.addEventListener('keydown', (e) => {
+        if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+          e.preventDefault();
+          globalSearchInput.focus();
+        }
+      });
+    }
 
     // Setup Dual Virtual Joysticks
     setupVirtualJoystick(el.joyBaseLeft, el.joyNippleLeft, el.joyCoordsLeft, false);
