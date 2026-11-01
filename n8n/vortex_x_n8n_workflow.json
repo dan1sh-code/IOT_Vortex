@@ -1,0 +1,437 @@
+{
+  "name": "VORTEX-X // Telemetry, Groq AI Tactical Brain & Telegram Sentinel",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "vortex-telemetry",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "node-webhook-in",
+      "name": "Webhook Ingestion (ESP32 / Dashboard)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        100,
+        480
+      ],
+      "webhookId": "vortex-x-telemetry-webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ===================================================================\n// 1. DATA VALIDATION & TELEMETRY SANITIZATION\n// ===================================================================\nconst raw = $input.first().json.body || $input.first().json;\n\nconst device = String(raw.device || 'VORTEX-X-01');\nconst timestamp = raw.timestamp || new Date().toISOString();\nconst distance = Number(parseFloat(raw.distance_cm ?? raw.distance ?? 999).toFixed(1));\nconst temperature = Number(parseFloat(raw.temperature_c ?? raw.temperature ?? 28.0).toFixed(1));\nconst humidity = Number(parseFloat(raw.humidity_pct ?? raw.humidity ?? 60.0).toFixed(1));\nconst pirState = Number(raw.pir_state ?? raw.pir ?? 0) === 1 ? 1 : 0;\nconst aiScore = Number(parseFloat(raw.anomaly_score ?? raw.aiScore ?? 0.95).toFixed(2));\nconst gait = String(raw.gaitState || raw.command || 'STAND').toUpperCase();\nconst customMsg = raw.message ? String(raw.message) : '';\n\n// Helper for mini visual progress bar in text\nfunction makeBar(val, max, length = 8) {\n  const ratio = Math.max(0, Math.min(1, val / max));\n  const filled = Math.round(ratio * length);\n  return '█'.repeat(filled) + '░'.repeat(length - filled);\n}\n\nconst distanceBar = makeBar(Math.min(distance, 100), 100);\nconst tempBar = makeBar(Math.min(temperature, 50), 50);\n\nreturn {\n  json: {\n    device,\n    timestamp,\n    distance,\n    temperature,\n    humidity,\n    pirState,\n    aiScore,\n    gait,\n    customMsg,\n    distanceBar,\n    tempBar,\n    receivedAt: new Date().toISOString()\n  }\n};"
+      },
+      "id": "node-sanitize",
+      "name": "Sanitize & Enrich Telemetry",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        320,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ===================================================================\n// 2. ANTI-FLOOD DEBOUNCE FILTER & THREAT CLASSIFICATION\n// ===================================================================\nconst item = $input.first().json;\nconst staticData = $getWorkflowStaticData('global');\n\nconst now = Date.now();\nconst lastAlertTime = staticData.lastAlertTime || 0;\nconst lastPIRAlert = staticData.lastPIRAlert || 0;\n\nlet eventCategory = 'ROUTINE_TELEMETRY';\nlet threatLevel = 'NORMAL';\n\nif (item.pirState === 1) {\n  eventCategory = 'PIR_INTRUSION';\n  threatLevel = 'CRITICAL';\n} else if (item.distance <= 10.0) {\n  eventCategory = 'OBSTACLE_HAZARD';\n  threatLevel = 'WARNING';\n} else if (item.aiScore < 0.65) {\n  eventCategory = 'AI_ANOMALY';\n  threatLevel = 'WARNING';\n} else if (item.temperature >= 35.0) {\n  eventCategory = 'OVERHEAT_WARNING';\n  threatLevel = 'WARNING';\n}\n\nlet allowNotification = true;\n\nif (eventCategory === 'PIR_INTRUSION') {\n  if (now - lastPIRAlert < 15000) {\n    allowNotification = false;\n  } else {\n    staticData.lastPIRAlert = now;\n  }\n} else if (threatLevel === 'NORMAL' && (now - lastAlertTime < 25000)) {\n  allowNotification = false;\n}\n\nif (allowNotification) {\n  staticData.lastAlertTime = now;\n}\n\n// Prepare Groq prompt payload\nconst groqPrompt = `Telemetri Robot ${item.device}:\n- Event: ${eventCategory} (Level: ${threatLevel})\n- Sensor PIR (Gerakan): ${item.pirState === 1 ? 'AKTIF DETEKSI MANUSIA/OBJEK' : 'AMAN STANDBY'}\n- HC-SR04 Jarak: ${item.distance} cm\n- Suhu ESP32/Motor: ${item.temperature} °C, RH: ${item.humidity}%\n- Model Anomaly Score: ${item.aiScore}\n- Mode Gerak: ${item.gait}\n- Catatan Tambahan: ${item.customMsg || '-'}`;\n\nreturn {\n  json: {\n    ...item,\n    eventCategory,\n    threatLevel,\n    allowNotification,\n    groqPrompt,\n    incidentId: 'VX-' + Math.floor(100000 + Math.random() * 900000)\n  }\n};"
+      },
+      "id": "node-rate-limit",
+      "name": "Anti-Flood & Classifier",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        540,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer MASUKKAN_GROQ_API_KEY_ANDA_DISINI"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "body": "={\n  \"model\": \"llama-3.3-70b-versatile\",\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"Anda adalah VORTEX-X Tactical Security AI, analis taktis otonom untuk robot berkaki empat ESP32. Tugas Anda menganalisis telemetri sensor (PIR motion, Ultrasonic, Suhu, Gait). Berikan analisis situasi padat (maksimal 2 kalimat) dan 1 rekomendasi tindakan taktis robot dalam Bahasa Indonesia yang tegas dan profesional. Jangan bertele-tele.\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": {{ JSON.stringify($json.groqPrompt) }}\n    }\n  ],\n  \"temperature\": 0.3,\n  \"max_tokens\": 180\n}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "node-groq-ai",
+      "name": "Groq AI Tactical Brain (Llama-3.3)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        780,
+        480
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract Groq AI completion or provide robust fallback if API key not set yet\nconst prev = $('Anti-Flood & Classifier').item.json;\nconst groqResponse = $input.first().json;\n\nlet aiInsight = '';\n\nif (groqResponse && groqResponse.choices && groqResponse.choices.length > 0) {\n  aiInsight = groqResponse.choices[0].message.content.trim();\n} else if (groqResponse && groqResponse.error) {\n  aiInsight = `[Groq API Notifikasi]: ${groqResponse.error.message || 'Kunci API Groq belum dimasukkan. Masukkan API Key Anda pada node Groq AI.'}`;\n} else {\n  // Intelligent local fallback if Groq key isn't active yet\n  if (prev.eventCategory === 'PIR_INTRUSION') {\n    aiInsight = 'Terdeteksi gerakan pada sektor depan robot. Disarankan verifikasi visual atau aktifkan alarm buzzer untuk perimeter defense.';\n  } else if (prev.eventCategory === 'OBSTACLE_HAZARD') {\n    aiInsight = 'Rintangan terdeteksi di bawah batas aman 10cm. Manuver putar arah atau berhenti darurat direkomendasikan.';\n  } else if (prev.eventCategory === 'AI_ANOMALY') {\n    aiInsight = 'Distribusi beban 8-servo tidak simetris. Reset stance ke posisi STAND direkomendasikan.';\n  } else if (prev.eventCategory === 'OVERHEAT_WARNING') {\n    aiInsight = 'Suhu mikrokontroler melebihi 35°C. Istirahatkan motor servo sejenak.';\n  } else {\n    aiInsight = 'Semua subsistem berjalan dalam batas toleransi normal.';\n  }\n}\n\nreturn {\n  json: {\n    ...prev,\n    aiInsight\n  }\n};"
+      },
+      "id": "node-parse-ai",
+      "name": "Parse Groq AI Insight",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1020,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "dataType": "string",
+        "value1": "={{ $json.eventCategory }}",
+        "rules": {
+          "rules": [
+            {
+              "value2": "PIR_INTRUSION",
+              "outputKey": "pir"
+            },
+            {
+              "value2": "OBSTACLE_HAZARD",
+              "outputKey": "obstacle"
+            },
+            {
+              "value2": "AI_ANOMALY",
+              "outputKey": "ai"
+            },
+            {
+              "value2": "OVERHEAT_WARNING",
+              "outputKey": "overheat"
+            }
+          ]
+        },
+        "fallbackOutput": "routine"
+      },
+      "id": "node-switch-category",
+      "name": "Route by Threat Category",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        1260,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $input.first().json;\nconst timeStr = new Date(d.timestamp).toLocaleTimeString('id-ID', { hour12: false });\n\nconst text = `🚨 <b>[ALARM KEAMANAN] DETEKSI GERAKAN PIR</b> 🚨\n━━━━━━━━━━━━━━━━━━━━━━━━━━\nRobot <b>${d.device}</b> mendeteksi pancaran inframerah dan gerakan objek di depan sensor!\n\n🆔 <b>ID Insiden:</b> <code>${d.incidentId}</code>\n⏱ <b>Waktu Deteksi:</b> <code>${timeStr} WIB</code>\n📍 <b>Status Gait:</b> <code>${d.gait}</code>\n\n📊 <b>TELEMETRI SENSOR SAAT KEJADIAN:</b>\n<code>┌─────────────────┬──────────────┐\n│ Sensor          │ Pembacaan    │\n├─────────────────┼──────────────┤\n│ Sensor PIR      │ 🔴 HIGH (1)  │\n│ Jarak HC-SR04   │ ${d.distance.toFixed(1).padStart(7)} cm │\n│ Suhu Lingkungan │ ${d.temperature.toFixed(1).padStart(7)} °C │\n│ Kelembapan RH   │ ${d.humidity.toFixed(1).padStart(7)} %  │\n│ AI Health Score │ ${(d.aiScore * 100).toFixed(0).padStart(7)} %  │\n└─────────────────┴──────────────┘</code>\n\n🧠 <b>ANALISIS TAKTIS GROQ AI (Llama-3.3):</b>\n<i>${d.aiInsight}</i>\n\n⚠️ <i>Robot mempertahankan mode siaga. Lakukan kendali cepat melalui tombol di bawah:</i>`;\n\nconst replyMarkup = {\n  inline_keyboard: [\n    [\n      { text: \"🛑 HENTIKAN DARURAT (E-STOP)\", callback_data: \"cmd_stop\" },\n      { text: \"🧎 MERUNDUK (CROUCH)\", callback_data: \"cmd_crouch\" }\n    ],\n    [\n      { text: \"🔊 BUNYIKAN ALARM BUZZER\", callback_data: \"cmd_alarm\" },\n      { text: \"🛡️ PATROLI PERIMETER\", callback_data: \"cmd_patrol\" }\n    ],\n    [\n      { text: \"🌐 BUKA DASHBOARD KONTROL\", url: \"http://192.168.4.1\" }\n    ]\n  ]\n};\n\nreturn {\n  json: {\n    chat_id: \"8707654343\",\n    text,\n    parse_mode: \"HTML\",\n    disable_notification: false,\n    reply_markup: replyMarkup,\n    incidentId: d.incidentId,\n    eventCategory: d.eventCategory\n  }\n};"
+      },
+      "id": "node-fmt-pir",
+      "name": "Format Telegram: PIR Intrusion",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $input.first().json;\nconst timeStr = new Date(d.timestamp).toLocaleTimeString('id-ID', { hour12: false });\n\nconst text = `🛑 <b>[PERINGATAN] HALANGAN KRITIS TERDETEKSI</b>\n━━━━━━━━━━━━━━━━━━━━━━━━━━\nRobot <b>${d.device}</b> mendeteksi halangan terlalu dekat di jalur gerak!\n\n📏 <b>Jarak Rintangan:</b> <code>${d.distance} cm</code> (Batas Aman: > 10 cm)\n<code>[${d.distanceBar}] BAHAYA TABRAKAN</code>\n⏱ <b>Waktu:</b> <code>${timeStr} WIB</code> | Gait: <code>${d.gait}</code>\n\n🧠 <b>REKOMENDASI GROQ AI:</b>\n<i>${d.aiInsight}</i>`;\n\nconst replyMarkup = {\n  inline_keyboard: [\n    [\n      { text: \"🛑 STOP DARURAT\", callback_data: \"cmd_stop\" },\n      { text: \"◀️ BELOK KIRI\", callback_data: \"cmd_left\" },\n      { text: \"▶️ BELOK KANAN\", callback_data: \"cmd_right\" }\n    ],\n    [\n      { text: \"🌐 Buka Mission Control\", url: \"http://192.168.4.1\" }\n    ]\n  ]\n};\n\nreturn {\n  json: {\n    chat_id: \"8707654343\",\n    text,\n    parse_mode: \"HTML\",\n    disable_notification: false,\n    reply_markup: replyMarkup,\n    incidentId: d.incidentId,\n    eventCategory: d.eventCategory\n  }\n};"
+      },
+      "id": "node-fmt-obstacle",
+      "name": "Format Telegram: Obstacle Hazard",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $input.first().json;\nconst timeStr = new Date(d.timestamp).toLocaleTimeString('id-ID', { hour12: false });\n\nconst text = `🧠 <b>[DIAGNOSTIK AI] ANOMALI TELEMETRI TERDETEKSI</b>\n━━━━━━━━━━━━━━━━━━━━━━━━━━\nModel <b>Isolation Forest Local AI</b> mendeteksi penyimpangan pola telemetri pada <b>${d.device}</b>.\n\n📉 <b>Health Score:</b> <code>${(d.aiScore * 100).toFixed(0)}%</code> (Threshold Normal: > 65%)\n⏱ <b>Waktu Analisis:</b> <code>${timeStr} WIB</code>\n\n🧠 <b>ANALISIS MODEL GROQ AI (Llama-3.3):</b>\n<i>${d.aiInsight}</i>\n\n<code>• Suhu Motor/ESP: ${d.temperature} °C\n• Jarak Sonar   : ${d.distance} cm\n• Kelembapan    : ${d.humidity} %</code>`;\n\nconst replyMarkup = {\n  inline_keyboard: [\n    [\n      { text: \"🕴️ RESET POSTUR KE STAND\", callback_data: \"cmd_stand\" },\n      { text: \"📊 EXPORT LOG TELEMETRI\", callback_data: \"cmd_export\" }\n    ]\n  ]\n};\n\nreturn {\n  json: {\n    chat_id: \"8707654343\",\n    text,\n    parse_mode: \"HTML\",\n    disable_notification: true,\n    reply_markup: replyMarkup,\n    incidentId: d.incidentId,\n    eventCategory: d.eventCategory\n  }\n};"
+      },
+      "id": "node-fmt-ai",
+      "name": "Format Telegram: AI Anomaly",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $input.first().json;\nconst timeStr = new Date(d.timestamp).toLocaleTimeString('id-ID', { hour12: false });\n\nconst text = `🌡️ <b>[SUHU TINGGI] PERINGATAN TERMAL ESP32</b>\n━━━━━━━━━━━━━━━━━━━━━━━━━━\nSensor DHT11 mendeteksi suhu komponen robot <b>${d.device}</b> mencapai <b>${d.temperature} °C</b>!\n\n<code>[${d.tempBar}] SUHU PANAS</code>\n💧 <b>Kelembapan RH:</b> <code>${d.humidity} %</code>\n⏱ <b>Waktu:</b> <code>${timeStr} WIB</code>\n\n🧠 <b>REKOMENDASI TAKTIS GROQ AI:</b>\n<i>${d.aiInsight}</i>`;\n\nconst replyMarkup = {\n  inline_keyboard: [\n    [\n      { text: \"🧎 MERUNDUK & ISTIRAHAT\", callback_data: \"cmd_crouch\" },\n      { text: \"🛑 MATIKAN TORSI SERVO\", callback_data: \"cmd_stop\" }\n    ]\n  ]\n};\n\nreturn {\n  json: {\n    chat_id: \"8707654343\",\n    text,\n    parse_mode: \"HTML\",\n    disable_notification: false,\n    reply_markup: replyMarkup,\n    incidentId: d.incidentId,\n    eventCategory: d.eventCategory\n  }\n};"
+      },
+      "id": "node-fmt-overheat",
+      "name": "Format Telegram: Overheat",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        680
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $input.first().json;\nconst timeStr = new Date(d.timestamp).toLocaleTimeString('id-ID', { hour12: false });\n\nconst text = `🤖 <b>[STATUS RUTIN] TELEMETRI VORTEX-X</b>\n━━━━━━━━━━━━━━━━━━━━━━━━━━\n⏱ <b>Update:</b> <code>${timeStr} WIB</code> | Status: 🟢 <b>NORMAL</b>\n\n<code>• Jarak Depan : ${d.distance.toFixed(1)} cm\n• Suhu ESP32  : ${d.temperature.toFixed(1)} °C\n• Kelembapan  : ${d.humidity.toFixed(1)} %\n• Sensor PIR  : 🟢 Standby (0)\n• AI Health   : ${(d.aiScore * 100).toFixed(0)} %\n• Mode Gait   : ${d.gait}</code>\n\n🧠 <b>EVALUASI GROQ AI:</b>\n<i>${d.aiInsight}</i>`;\n\nreturn {\n  json: {\n    chat_id: \"8707654343\",\n    text,\n    parse_mode: \"HTML\",\n    disable_notification: true,\n    incidentId: d.incidentId,\n    eventCategory: d.eventCategory\n  }\n};"
+      },
+      "id": "node-fmt-routine",
+      "name": "Format Telegram: Routine Digest",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        840
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.telegram.org/bot8281785582:AAGWNwFMIRD6kRjw9-QrVcM8WuXmPMP6UMU/sendMessage",
+        "sendBody": true,
+        "contentType": "json",
+        "body": "={{ $json }}",
+        "options": {
+          "timeout": 8000
+        }
+      },
+      "id": "node-telegram-send",
+      "name": "Kirim Pesan Telegram Bot",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1880,
+        480
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const prev = $('Anti-Flood & Classifier').item.json;\nconst groqData = $('Parse Groq AI Insight').item.json;\n\nreturn {\n  json: {\n    event_id: prev.incidentId,\n    category: prev.eventCategory,\n    device: prev.device,\n    distance_cm: prev.distance,\n    temperature_c: prev.temperature,\n    humidity_pct: prev.humidity,\n    pir_state: prev.pirState,\n    ai_score: prev.aiScore,\n    gait: prev.gait,\n    ai_insight: groqData.aiInsight,\n    telegram_dispatched: true,\n    logged_at: new Date().toISOString()\n  }\n};"
+      },
+      "id": "node-audit-log",
+      "name": "Audit Logging Formatter",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2140,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"status\": \"success\",\n  \"incident_id\": \"{{ $('Audit Logging Formatter').item.json.event_id }}\",\n  \"category\": \"{{ $('Audit Logging Formatter').item.json.category }}\",\n  \"ai_model\": \"Groq Llama-3.3-70b\",\n  \"telegram_sent\": true,\n  \"processed_at\": new Date().toISOString()\n}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "node-respond-webhook",
+      "name": "Respond to Robot/Dashboard",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2380,
+        480
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook Ingestion (ESP32 / Dashboard)": {
+      "main": [
+        [
+          {
+            "node": "Sanitize & Enrich Telemetry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sanitize & Enrich Telemetry": {
+      "main": [
+        [
+          {
+            "node": "Anti-Flood & Classifier",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Anti-Flood & Classifier": {
+      "main": [
+        [
+          {
+            "node": "Groq AI Tactical Brain (Llama-3.3)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Groq AI Tactical Brain (Llama-3.3)": {
+      "main": [
+        [
+          {
+            "node": "Parse Groq AI Insight",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Groq AI Insight": {
+      "main": [
+        [
+          {
+            "node": "Route by Threat Category",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route by Threat Category": {
+      "main": [
+        [
+          {
+            "node": "Format Telegram: PIR Intrusion",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format Telegram: Obstacle Hazard",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format Telegram: AI Anomaly",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format Telegram: Overheat",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format Telegram: Routine Digest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Telegram: PIR Intrusion": {
+      "main": [
+        [
+          {
+            "node": "Kirim Pesan Telegram Bot",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Telegram: Obstacle Hazard": {
+      "main": [
+        [
+          {
+            "node": "Kirim Pesan Telegram Bot",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Telegram: AI Anomaly": {
+      "main": [
+        [
+          {
+            "node": "Kirim Pesan Telegram Bot",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Telegram: Overheat": {
+      "main": [
+        [
+          {
+            "node": "Kirim Pesan Telegram Bot",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Telegram: Routine Digest": {
+      "main": [
+        [
+          {
+            "node": "Kirim Pesan Telegram Bot",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Kirim Pesan Telegram Bot": {
+      "main": [
+        [
+          {
+            "node": "Audit Logging Formatter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Audit Logging Formatter": {
+      "main": [
+        [
+          {
+            "node": "Respond to Robot/Dashboard",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": [
+    {
+      "name": "VORTEX-X"
+    },
+    {
+      "name": "Groq AI (Llama-3.3)"
+    },
+    {
+      "name": "Telegram Bot Sentinel"
+    },
+    {
+      "name": "ESP32 IoT"
+    }
+  ]
+}

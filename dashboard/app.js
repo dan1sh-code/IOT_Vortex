@@ -20,6 +20,9 @@
     currentSpeed: 2, // 1: ECO, 2: NORMAL, 3: SPORT
     activeGamepads: {},
     selectedGamepadIndex: null,
+    n8nWebhookUrl: 'http://localhost:5678/webhook/vortex-telemetry',
+    n8nEnabled: true,
+    lastN8nAlertTime: 0,
     
     // Telemetry Values
     telemetry: {
@@ -714,6 +717,45 @@
     renderTelemetry();
   }
 
+  // ===================================================================
+  // N8N WEBHOOK DISPATCHER
+  // ===================================================================
+  async function triggerN8nWebhook(eventType, customMessage) {
+    if (!state.n8nEnabled || !state.n8nWebhookUrl) return;
+    const now = Date.now();
+    // Rate limit: Max 1 webhook every 3.5 seconds
+    if (now - state.lastN8nAlertTime < 3500) return;
+    state.lastN8nAlertTime = now;
+
+    const payload = {
+      device: "VORTEX-X",
+      timestamp: new Date().toISOString(),
+      event: eventType,
+      distance_cm: state.telemetry.distance,
+      temperature_c: state.telemetry.temperature,
+      humidity_pct: state.telemetry.humidity,
+      pir_state: state.telemetry.pirState,
+      anomaly_score: state.telemetry.aiScore,
+      gaitState: state.currentCommand,
+      message: customMessage || `Event ${eventType} tercatat pada Mission Control.`
+    };
+
+    try {
+      fetch(state.n8nWebhookUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        mode: 'cors'
+      }).then(res => {
+        if (res.ok) {
+          addLog(`[n8n] Webhook terkirim: ${eventType} (${res.status} OK)`, 'SYS');
+        }
+      }).catch(() => {
+        // Silently catch if n8n is offline
+      });
+    } catch (e) {}
+  }
+
   function onPirIntruderAlert() {
     el.pirCard.classList.add('motion-detected');
     el.pirStatusText.textContent = 'PERINGATAN: GERAKAN TERDETEKSI!';
@@ -723,6 +765,9 @@
 
     addLog('SENSOR PIR: Pancaran inframerah terdeteksi! Manusia/objek bergerak di depan robot.', 'PIR');
     sfx.pirAlert();
+
+    // Trigger n8n Automated Alert
+    triggerN8nWebhook('PIR_INTRUSION', 'PIR Sensor mendeteksi gerakan manusia/objek di depan robot!');
 
     // Haptic pulse on gamepad
     triggerHaptic(state.activeGamepads[state.selectedGamepadIndex], 0.7, 0.9, 400);
@@ -768,6 +813,7 @@
       el.distanceStatus.className = 'metric-status warning';
       el.obstacleBlip.setAttribute('cx', '100');
       el.obstacleBlip.setAttribute('cy', '100');
+      triggerN8nWebhook('CRITICAL_OBSTACLE', `Halangan sangat dekat: ${state.telemetry.distance.toFixed(1)} cm!`);
     } else {
       el.distanceStatus.textContent = 'JARAK AMAN (> 10 cm)';
       el.distanceStatus.className = 'metric-status';
