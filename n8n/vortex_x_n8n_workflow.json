@@ -1,6 +1,435 @@
 {
-  "name": "VORTEX-X // Telemetry, Groq AI Tactical Brain & Telegram Sentinel",
+  "id": "VortexMaster0001",
+  "name": "VORTEX-X // Master AI Agent (Voice AI + Telemetry + Telegram Bot)",
   "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "vortex-voice",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "vx-voice-webhook",
+      "name": "Webhook: Terima Audio Mic (.wav)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        80,
+        440
+      ],
+      "webhookId": "vortex-x-voice-webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "// MASUKKAN GROQ API KEY ANDA DI BARIS INI (dipakai STT + AI Agent + TTS):\nconst GROQ_API_KEY = 'MASUKKAN_GROQ_API_KEY_ANDA_DISINI';\n\n// Pastikan binary audio bernama 'data' berekstensi .wav agar diterima Groq Whisper\nconst item = $input.first();\nconst binKeys = item.binary ? Object.keys(item.binary) : [];\n\nif (binKeys.length === 0) {\n  throw new Error('Tidak ada file audio WAV biner yang diterima di Webhook!');\n}\n\nconst firstKey = binKeys[0];\nconst binObj = item.binary[firstKey];\nbinObj.fileName = 'voice.wav';\nbinObj.mimeType = 'audio/wav';\n\nif (firstKey !== 'data') {\n  item.binary.data = binObj;\n  delete item.binary[firstKey];\n}\n\nconst query = (item.json && item.json.query) ? item.json.query : {};\nconst temp = Number(parseFloat(query.temp ?? 28.0).toFixed(1));\nconst hum = Number(parseFloat(query.hum ?? 65.0).toFixed(1));\nconst pir = Number(query.pir ?? 0) === 1 ? 1 : 0;\n\nitem.json = {\n  ...item.json,\n  groqApiKey: GROQ_API_KEY.replace(/^Bearer\\s+/i, '').trim(),\n  temp,\n  hum,\n  pir,\n  receivedAt: new Date().toISOString()\n};\n\nreturn item;"
+      },
+      "id": "vx-voice-prep-wav",
+      "name": "Prepare WAV Binary & Sensor",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        300,
+        440
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.groq.com/openai/v1/audio/transcriptions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.groqApiKey }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formBinaryData",
+              "name": "file",
+              "inputDataFieldName": "data"
+            },
+            {
+              "name": "model",
+              "value": "whisper-large-v3-turbo"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "vx-voice-stt",
+      "name": "Groq Whisper STT (Mic ke Teks)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        520,
+        440
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const prep = $('Prepare WAV Binary & Sensor').first().json || {};\nconst stt = $input.first().json || {};\n\nconst transcript = String(stt.text || '').trim();\nconst sttError = stt.error ? (stt.error.message || JSON.stringify(stt.error)) : '';\nconst temp = Number(prep.temp ?? 28.0);\nconst hum = Number(prep.hum ?? 65.0);\nconst pir = Number(prep.pir ?? 0) === 1 ? 1 : 0;\nconst pirLabel = pir === 1 ? 'Gerakan Terdeteksi' : 'Aman Standby';\n\nreturn {\n  json: {\n    groqApiKey: prep.groqApiKey || '',\n    transcript: transcript || '(Suara tidak terdengar jelas)',\n    sttEmpty: transcript.length < 2,\n    sttError,\n    temp,\n    hum,\n    pir,\n    pirLabel,\n    receivedAt: prep.receivedAt || new Date().toISOString()\n  }\n};"
+      },
+      "id": "vx-voice-build-prompt",
+      "name": "Susun Konteks AI Agent & Sensor",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        740,
+        440
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.groqApiKey }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'qwen/qwen3.8-27b', messages: [{ role: 'system', content: `You are VORTEX-X, a friendly smart quadruped robot AI assistant created by Hafiz, Fadlan, and Devi for the IoT course taught by Pak Rizkima. The user may speak in Indonesian or English, understand both! If asked who made you, creator, team, course, or lecturer, proudly mention Hafiz, Fadlan, Devi, and Pak Rizkima's IoT course. Because your voice synthesizer speaks English, ALWAYS reply in concise, cheerful, spoken English (maximum 155 characters, 1-2 short sentences, NO markdown/emojis). Current robot sensors: Temp ${$json.temp}C, Humidity ${$json.hum}%, PIR: ${$json.pirLabel}. If user asks you to move/wave/dance/sleep/love/look, append AT MOST ONE tag at the very end from: [CMD:WAVE] [CMD:FORWARD] [CMD:STAND] [CMD:RELAX] [CMD:CROUCH] and/or [FACE:HAPPY] [FACE:LOVE] [FACE:ANGRY] [FACE:SLEEPY] [FACE:SCANNER] [FACE:MUSIC].` }, { role: 'user', content: $json.transcript }], temperature: 0.5, max_tokens: 180 }) }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "vx-voice-llm",
+      "name": "AI Agent Brain (Groq Qwen3.8)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        960,
+        440
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const ctx = $('Susun Konteks AI Agent & Sensor').first().json;\nconst res = $input.first().json || {};\n\nlet rawReply = '';\nlet llmError = '';\n\nif (res && res.choices && res.choices.length > 0) {\n  rawReply = String(res.choices[0].message.content || '').replace(/<think>[\\s\\S]*?<\\/think>/gi, '').trim();\n} else {\n  if (res && res.error) {\n    llmError = res.error.message || 'Groq API error';\n  }\n  rawReply = ctx.sttEmpty\n    ? 'Hello! I did not hear clearly, please speak closer to my microphone. [FACE:LOOK_AROUND]'\n    : 'Hello! I am Vortex X, ready to serve you! [CMD:WAVE] [FACE:HAPPY]';\n}\n\nlet cmd = '';\nlet face = '';\n\nconst cmdMatch = rawReply.match(/\\[CMD:([A-Z_]+)\\]/i);\nif (cmdMatch) {\n  cmd = cmdMatch[1].toUpperCase();\n}\n\nconst faceMatch = rawReply.match(/\\[FACE:([A-Z_]+)\\]/i);\nif (faceMatch) {\n  face = faceMatch[1].toUpperCase();\n}\n\nlet cleanText = rawReply\n  .replace(/\\[CMD:[A-Z_]+\\]/gi, '')\n  .replace(/\\[FACE:[A-Z_]+\\]/gi, '')\n  .replace(/[*_`#]/g, '')\n  .replace(/\\s+/g, ' ')\n  .trim();\n\nif (!cleanText) cleanText = 'Ready for your command.';\nif (cleanText.length > 185) {\n  cleanText = cleanText.slice(0, 182) + '...';\n}\n\nlet eventCategory = 'VOICE_CHAT';\nif (ctx.pir === 1) {\n  eventCategory = 'VOICE_PIR_ALERT';\n} else if (ctx.temp >= 35.0) {\n  eventCategory = 'VOICE_OVERHEAT';\n} else if (cmd || face) {\n  eventCategory = 'VOICE_ACTION';\n}\n\nreturn {\n  json: {\n    groqApiKey: ctx.groqApiKey || '',\n    transcript: ctx.transcript,\n    sttEmpty: ctx.sttEmpty,\n    sttError: ctx.sttError,\n    llmError,\n    cleanText,\n    cmd,\n    face,\n    headerText: cleanText.replace(/[^\\x20-\\x7E]/g, '').slice(0, 90),\n    temp: ctx.temp,\n    hum: ctx.hum,\n    pir: ctx.pir,\n    pirLabel: ctx.pirLabel,\n    eventCategory,\n    incidentId: 'VX-V' + Math.floor(10000 + Math.random() * 90000),\n    receivedAt: ctx.receivedAt\n  }\n};"
+      },
+      "id": "vx-voice-parse",
+      "name": "Extract AI Reply & Klasifikasi",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1180,
+        440
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.groq.com/openai/v1/audio/speech",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.groqApiKey }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'canopylabs/orpheus-v1-english', input: $json.cleanText, voice: 'austin', response_format: 'wav' }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file",
+              "outputPropertyName": "data"
+            }
+          },
+          "timeout": 15000
+        }
+      },
+      "id": "vx-voice-tts-groq",
+      "name": "TTS WAV (Groq Orpheus - Pakai Key Groq)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1420,
+        440
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.voicerss.org/?key=MASUKKAN_VOICERSS_KEY_OPSIONAL&hl=id-id&c=WAV&f=16khz_16bit_mono&src={{ encodeURIComponent($json.cleanText) }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file",
+              "outputPropertyName": "data"
+            }
+          },
+          "timeout": 15000
+        }
+      },
+      "id": "vx-voice-tts-id",
+      "name": "[OPSIONAL Indo] TTS VoiceRSS (id-id WAV)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1420,
+        680
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Pastikan selalu ada file WAV 44-byte header standar yang bersih untuk ESP32 MAX98357A\nconst item = $input.first();\nconst meta = $('Extract AI Reply & Klasifikasi').first().json;\n\nconst hasBinary = Boolean(item && item.binary && item.binary.data && item.binary.data.data);\nlet ttsError = '';\nlet ttsFallbackUsed = false;\n\nif (hasBinary) {\n  try {\n    const rawData = await this.helpers.getBinaryDataBuffer(0, 'data');\n    const rawBuf = Buffer.from(rawData);\n    if (rawBuf && rawBuf.length > 44 && rawBuf.toString('ascii', 0, 4) === 'RIFF' && rawBuf.toString('ascii', 8, 4) === 'WAVE') {\n      let sr = 24000;\n      let ch = 1;\n      let bps = 16;\n      let pcmSlice = null;\n      let off = 12;\n      while (off + 8 <= rawBuf.length) {\n        const id = rawBuf.toString('ascii', off, off + 4);\n        const sz = rawBuf.readUInt32LE(off + 4);\n        if (id === 'fmt ' && off + 8 + 16 <= rawBuf.length) {\n          ch  = rawBuf.readUInt16LE(off + 10);\n          sr  = rawBuf.readUInt32LE(off + 12);\n          bps = rawBuf.readUInt16LE(off + 22);\n        }\n        if (id === 'data') {\n          const dataStart = off + 8;\n          const dataEnd = (sz === 0xFFFFFFFF || sz === 0 || dataStart + sz > rawBuf.length) ? rawBuf.length : (dataStart + sz);\n          pcmSlice = rawBuf.subarray(dataStart, dataEnd);\n          break;\n        }\n        if (sz === 0xFFFFFFFF || sz === 0) break;\n        off += 8 + sz + (sz % 2);\n      }\n      if (pcmSlice && pcmSlice.length > 0) {\n        // Trim leading silence (>20ms nol murni) agar speaker langsung berbunyi\n        let trimOff = 0;\n        while (trimOff + 2 <= pcmSlice.length && Math.abs(pcmSlice.readInt16LE(trimOff)) < 8 && trimOff < sr * 2 * 0.25) {\n          trimOff += 2;\n        }\n        if (trimOff > 64) pcmSlice = pcmSlice.subarray(trimOff);\n        const pcmBytes = pcmSlice.length - (pcmSlice.length % 2);\n        const cleanWav = Buffer.alloc(44 + pcmBytes);\n        const byteRate = sr * ch * (bps / 8);\n        const blockAlign = ch * (bps / 8);\n        cleanWav.write('RIFF', 0, 'ascii');\n        cleanWav.writeUInt32LE(36 + pcmBytes, 4);\n        cleanWav.write('WAVE', 8, 'ascii');\n        cleanWav.write('fmt ', 12, 'ascii');\n        cleanWav.writeUInt32LE(16, 16);\n        cleanWav.writeUInt16LE(1, 20);\n        cleanWav.writeUInt16LE(ch, 22);\n        cleanWav.writeUInt32LE(sr, 24);\n        cleanWav.writeUInt32LE(byteRate, 28);\n        cleanWav.writeUInt16LE(blockAlign, 32);\n        cleanWav.writeUInt16LE(bps, 34);\n        cleanWav.write('data', 36, 'ascii');\n        cleanWav.writeUInt32LE(pcmBytes, 40);\n        pcmSlice.copy(cleanWav, 44, 0, pcmBytes);\n        const cleanBin = await this.helpers.prepareBinaryData(cleanWav, 'reply.wav', 'audio/wav');\n        return [{\n          json: {\n            ttsFallbackUsed: false,\n            ttsError: '',\n            cmd: meta.cmd,\n            face: meta.face,\n            headerText: meta.headerText,\n            wavBytes: cleanWav.length\n          },\n          binary: { data: cleanBin }\n        }];\n      }\n    }\n  } catch (e) {\n    // Jika gagal rapikan header, tetap teruskan biner apa adanya\n  }\n  item.binary.data.fileName = 'reply.wav';\n  item.binary.data.mimeType = 'audio/wav';\n  return [{\n    json: {\n      ttsFallbackUsed: false,\n      ttsError: '',\n      cmd: meta.cmd,\n      face: meta.face,\n      headerText: meta.headerText\n    },\n    binary: item.binary\n  }];\n}\n\nttsFallbackUsed = true;\nttsError = (item && item.json && item.json.error)\n  ? String(item.json.error.message || item.json.message || 'TTS Groq belum aktif (Accept Terms Orpheus)')\n  : 'TTS Groq tidak mengembalikan audio WAV';\n\nconst sr = 16000;\nconst numSamples = Math.floor(sr * 0.45);\nconst pcmBytes = numSamples * 2;\nconst wavBuf = Buffer.alloc(44 + pcmBytes);\n\nwavBuf.write('RIFF', 0, 'ascii');\nwavBuf.writeUInt32LE(36 + pcmBytes, 4);\nwavBuf.write('WAVE', 8, 'ascii');\nwavBuf.write('fmt ', 12, 'ascii');\nwavBuf.writeUInt32LE(16, 16);\nwavBuf.writeUInt16LE(1, 20);\nwavBuf.writeUInt16LE(1, 22);\nwavBuf.writeUInt32LE(sr, 24);\nwavBuf.writeUInt32LE(sr * 2, 28);\nwavBuf.writeUInt16LE(2, 32);\nwavBuf.writeUInt16LE(16, 34);\nwavBuf.write('data', 36, 'ascii');\nwavBuf.writeUInt32LE(pcmBytes, 40);\n\nfor (let i = 0; i < numSamples; i++) {\n  const freq = i < numSamples / 2 ? 660 : 880;\n  const t = i / sr;\n  const env = Math.min(1, Math.min(i, numSamples - i) / 400);\n  const sample = Math.round(Math.sin(2 * Math.PI * freq * t) * 14000 * env);\n  wavBuf.writeInt16LE(sample, 44 + i * 2);\n}\n\nconst binData = await this.helpers.prepareBinaryData(wavBuf, 'reply.wav', 'audio/wav');\nreturn [{\n  json: {\n    ttsFallbackUsed,\n    ttsError,\n    cmd: meta.cmd,\n    face: meta.face,\n    headerText: meta.headerText,\n    wavBytes: wavBuf.length\n  },\n  binary: { data: binData }\n}];"
+      },
+      "id": "vx-voice-ensure-wav",
+      "name": "Ensure Valid WAV Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1650,
+        440
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "binary",
+        "inputDataFieldName": "data",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "X-Vortex-Cmd",
+                "value": "={{ $('Extract AI Reply & Klasifikasi').first().json.cmd }}"
+              },
+              {
+                "name": "X-Vortex-Face",
+                "value": "={{ $('Extract AI Reply & Klasifikasi').first().json.face }}"
+              },
+              {
+                "name": "X-Vortex-Text",
+                "value": "={{ $('Extract AI Reply & Klasifikasi').first().json.headerText }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "vx-voice-respond",
+      "name": "Respond Audio WAV ke Speaker ESP32",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1880,
+        440
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Setelah audio dikirim secepatnya ke Speaker ESP32, susun konteks untuk Telegram Bot\nconst { groqApiKey, ...data } = $('Extract AI Reply & Klasifikasi').first().json;\nconst wavMeta = $('Ensure Valid WAV Output').first().json || {};\n\nfunction makeBar(val, max, length = 8) {\n  const ratio = Math.max(0, Math.min(1, Number(val) / max));\n  const filled = Math.round(ratio * length);\n  return '█'.repeat(filled) + '░'.repeat(length - filled);\n}\n\nconst timeWib = new Date().toLocaleTimeString('id-ID', {\n  timeZone: 'Asia/Jakarta',\n  hour12: false\n});\n\nconst ttsNote = wavMeta.ttsFallbackUsed\n  ? '\\n⚠️ <i>TTS Orpheus belum aktif (Accept Terms di console.groq.com agar suara bicara English penuh; sementara speaker memutar nada konfirmasi).</i>'\n  : '';\n\nreturn {\n  json: {\n    ...data,\n    ttsFallbackUsed: Boolean(wavMeta.ttsFallbackUsed),\n    ttsError: wavMeta.ttsError || '',\n    ttsNote,\n    tempBar: makeBar(data.temp, 50),\n    humBar: makeBar(data.hum, 100),\n    timeWib,\n    chatId: '8707654343'\n  }\n};"
+      },
+      "id": "vx-voice-prep-tg",
+      "name": "Siapkan Laporan Voice & Sensor",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2120,
+        440
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.eventCategory }}",
+                    "rightValue": "VOICE_PIR_ALERT",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "VOICE_PIR_ALERT"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.eventCategory }}",
+                    "rightValue": "VOICE_OVERHEAT",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "VOICE_OVERHEAT"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.eventCategory }}",
+                    "rightValue": "VOICE_ACTION",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "VOICE_ACTION"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "id": "vx-voice-switch",
+      "name": "Route Laporan Voice ke Telegram",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        2360,
+        440
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $input.first().json;\nconst esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n\nconst text = `🚨 <b>[VOICE AI + ALERT PIR] INTERAKSI TERDETEKSI</b> 🚨\n━━━━━━━━━━━━━━━━━━━━━━━━━━\nGerakan PIR terdeteksi lalu Mic INMP441 menangkap suara &amp; AI menjawab lewat Speaker MAX98357A.\n\n🆔 <b>ID Sesi:</b> <code>${esc(d.incidentId)}</code> | ⏱ <code>${esc(d.timeWib)} WIB</code>\n🎤 <b>Suara Masuk (STT):</b>\n<i>\"${esc(d.transcript)}\"</i>\n\n🤖 <b>Balasan AI (Speaker):</b>\n<b>\"${esc(d.cleanText)}\"</b>\n\n📊 <b>TELEMETRI &amp; AKSI ROBOT:</b>\n<code>• Sensor PIR  : 🔴 GERAK (1)\n• Suhu DHT11  : ${Number(d.temp).toFixed(1)} °C [${d.tempBar}]\n• Kelembapan  : ${Number(d.hum).toFixed(1)} %\n• Perintah RX : ${esc(d.cmd || 'NONE')}\n• Ekspresi    : ${esc(d.face || 'AUTO')}</code>${d.ttsNote || ''}`;\n\nconst reply_markup = {\n  inline_keyboard: [\n    [\n      { text: '👋 Lambaikan Kaki', callback_data: 'cmd_wave' },\n      { text: '🛑 Relaks / Stop', callback_data: 'cmd_relax' }\n    ]\n  ]\n};\n\nreturn { json: { chat_id: d.chatId, text, parse_mode: 'HTML', disable_notification: false, reply_markup } };"
+      },
+      "id": "vx-voice-fmt-pir",
+      "name": "Format Telegram: Suara + PIR Alert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2620,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $input.first().json;\nconst esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n\nconst text = `🌡️ <b>[VOICE AI + SUHU TINGGI] PERINGATAN DHT11</b>\n━━━━━━━━━━━━━━━━━━━━━━━━━━\nSuhu sekitar robot mencapai <b>${Number(d.temp).toFixed(1)} °C</b> saat sesi percakapan suara!\n\n🆔 <b>ID Sesi:</b> <code>${esc(d.incidentId)}</code> | ⏱ <code>${esc(d.timeWib)} WIB</code>\n🎤 <b>Suara Masuk (STT):</b> <i>\"${esc(d.transcript)}\"</i>\n🤖 <b>Balasan AI (Speaker):</b> <b>\"${esc(d.cleanText)}\"</b>\n\n<code>• Suhu DHT11 : ${Number(d.temp).toFixed(1)} °C [${d.tempBar}]\n• Kelembapan : ${Number(d.hum).toFixed(1)} %\n• Status PIR : ${d.pir === 1 ? '🔴 AKTIF' : '🟢 Standby'}\n• Aksi/OLED  : ${esc(d.cmd || '-')} / ${esc(d.face || 'AUTO')}</code>${d.ttsNote || ''}`;\n\nconst reply_markup = {\n  inline_keyboard: [\n    [\n      { text: '🧎 Istirahatkan Servo', callback_data: 'cmd_relax' },\n      { text: '🕴️ Stand Normal', callback_data: 'cmd_stand' }\n    ]\n  ]\n};\n\nreturn { json: { chat_id: d.chatId, text, parse_mode: 'HTML', disable_notification: false, reply_markup } };"
+      },
+      "id": "vx-voice-fmt-temp",
+      "name": "Format Telegram: Suara + Suhu Panas",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2620,
+        350
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $input.first().json;\nconst esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n\nconst text = `🦾 <b>[VOICE AI + AKSI ROBOT] PERINTAH SUARA DIEKSEKUSI</b>\n━━━━━━━━━━━━━━━━━━━━━━━━━━\nAI Agent membalas lewat Speaker MAX98357A dan mengirim aksi ke OLED / ESP32 Receiver!\n\n🆔 <b>ID Sesi:</b> <code>${esc(d.incidentId)}</code> | ⏱ <code>${esc(d.timeWib)} WIB</code>\n🎤 <b>Anda Ucapkan:</b>\n<i>\"${esc(d.transcript)}\"</i>\n\n🔊 <b>AI Menjawab:</b>\n<b>\"${esc(d.cleanText)}\"</b>\n\n⚙️ <b>EKSEKUSI HARDWARE:</b>\n<code>• Gerakan Servo RX : ${esc(d.cmd || 'TIDAK ADA')}\n• Ekspresi OLED TX : ${esc(d.face || 'AUTO')}\n• Suhu / RH DHT11  : ${Number(d.temp).toFixed(1)} °C / ${Number(d.hum).toFixed(1)} %</code>${d.ttsNote || ''}`;\n\nconst reply_markup = {\n  inline_keyboard: [\n    [\n      { text: '👋 Wave Lagi', callback_data: 'cmd_wave' },\n      { text: '🕴️ Stand', callback_data: 'cmd_stand' }\n    ]\n  ]\n};\n\nreturn { json: { chat_id: d.chatId, text, parse_mode: 'HTML', disable_notification: false, reply_markup } };"
+      },
+      "id": "vx-voice-fmt-action",
+      "name": "Format Telegram: Suara + Aksi Robot",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2620,
+        540
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $input.first().json;\nconst esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n\nconst text = `🎙️ <b>[VOICE AI LOG] PERCAKAPAN VORTEX-X</b>\n━━━━━━━━━━━━━━━━━━━━━━━━━━\n🆔 <b>ID Sesi:</b> <code>${esc(d.incidentId)}</code> | ⏱ <code>${esc(d.timeWib)} WIB</code>\n\n🎤 <b>Suara Mic INMP441:</b>\n<i>\"${esc(d.transcript)}\"</i>\n\n🔊 <b>Jawaban AI Agent (Speaker):</b>\n<b>\"${esc(d.cleanText)}\"</b>\n\n📊 <b>KONDISI ROBOT:</b>\n<code>• Suhu DHT11 : ${Number(d.temp).toFixed(1)} °C\n• Kelembapan : ${Number(d.hum).toFixed(1)} %\n• Sensor PIR : 🟢 Standby (0)\n• OLED Face  : ${esc(d.face || 'AUTO')}</code>${d.ttsNote || ''}`;\n\nreturn { json: { chat_id: d.chatId, text, parse_mode: 'HTML', disable_notification: true } };"
+      },
+      "id": "vx-voice-fmt-chat",
+      "name": "Format Telegram: Percakapan Voice AI",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2620,
+        730
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.telegram.org/bot8281785582:AAGWNwFMIRD6kRjw9-QrVcM8WuXmPMP6UMU/sendMessage",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 8000
+        }
+      },
+      "id": "vx-voice-telegram-send",
+      "name": "Kirim Pesan Telegram Bot (Voice AI)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2900,
+        440
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const rep = $('Siapkan Laporan Voice & Sensor').first().json;\nconst tg = $input.first().json || {};\n\nreturn {\n  json: {\n    session_id: rep.incidentId,\n    category: rep.eventCategory,\n    transcript: rep.transcript,\n    ai_reply: rep.cleanText,\n    robot_cmd: rep.cmd || 'NONE',\n    oled_face: rep.face || 'AUTO',\n    temp_c: rep.temp,\n    humidity_pct: rep.hum,\n    pir_state: rep.pir,\n    tts_fallback_used: rep.ttsFallbackUsed,\n    telegram_ok: Boolean(tg.ok),\n    logged_at: new Date().toISOString()\n  }\n};"
+      },
+      "id": "vx-voice-audit",
+      "name": "Audit Log Voice AI & Telegram",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3140,
+        440
+      ]
+    },
     {
       "parameters": {
         "httpMethod": "POST",
@@ -13,35 +442,35 @@
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
       "position": [
-        100,
-        480
+        80,
+        1280
       ],
       "webhookId": "vortex-x-telemetry-webhook"
     },
     {
       "parameters": {
-        "jsCode": "// ===================================================================\n// 1. DATA VALIDATION & TELEMETRY SANITIZATION\n// ===================================================================\nconst raw = $input.first().json.body || $input.first().json;\n\nconst device = String(raw.device || 'VORTEX-X-01');\nconst timestamp = raw.timestamp || new Date().toISOString();\nconst distance = Number(parseFloat(raw.distance_cm ?? raw.distance ?? 999).toFixed(1));\nconst temperature = Number(parseFloat(raw.temperature_c ?? raw.temperature ?? 28.0).toFixed(1));\nconst humidity = Number(parseFloat(raw.humidity_pct ?? raw.humidity ?? 60.0).toFixed(1));\nconst pirState = Number(raw.pir_state ?? raw.pir ?? 0) === 1 ? 1 : 0;\nconst aiScore = Number(parseFloat(raw.anomaly_score ?? raw.aiScore ?? 0.95).toFixed(2));\nconst gait = String(raw.gaitState || raw.command || 'STAND').toUpperCase();\nconst customMsg = raw.message ? String(raw.message) : '';\n\n// Helper for mini visual progress bar in text\nfunction makeBar(val, max, length = 8) {\n  const ratio = Math.max(0, Math.min(1, val / max));\n  const filled = Math.round(ratio * length);\n  return '█'.repeat(filled) + '░'.repeat(length - filled);\n}\n\nconst distanceBar = makeBar(Math.min(distance, 100), 100);\nconst tempBar = makeBar(Math.min(temperature, 50), 50);\n\nreturn {\n  json: {\n    device,\n    timestamp,\n    distance,\n    temperature,\n    humidity,\n    pirState,\n    aiScore,\n    gait,\n    customMsg,\n    distanceBar,\n    tempBar,\n    receivedAt: new Date().toISOString()\n  }\n};"
+        "jsCode": "const raw = $input.first().json.body || $input.first().json;\n\nconst device = String(raw.device || 'VORTEX-X');\nconst timestamp = raw.timestamp || new Date().toISOString();\nconst oledFace = String(raw.oled_face || raw.oledFace || 'AUTO').toUpperCase();\nconst temperature = Number(parseFloat(raw.temperature_c ?? raw.temperature ?? 28.0).toFixed(1));\nconst humidity = Number(parseFloat(raw.humidity_pct ?? raw.humidity ?? 65.0).toFixed(1));\nconst pirState = Number(raw.pir_state ?? raw.pir ?? 0) === 1 ? 1 : 0;\nconst aiScore = Number(parseFloat(raw.anomaly_score ?? raw.aiScore ?? 0.95).toFixed(2));\nconst gait = String(raw.gaitState || raw.command || 'STAND').toUpperCase();\nconst eventType = String(raw.event || 'ROUTINE_TELEMETRY').toUpperCase();\nconst customMsg = raw.message ? String(raw.message) : '';\n\nfunction makeBar(val, max, length = 8) {\n  const ratio = Math.max(0, Math.min(1, val / max));\n  const filled = Math.round(ratio * length);\n  return '█'.repeat(filled) + '░'.repeat(length - filled);\n}\n\nconst tempBar = makeBar(Math.min(temperature, 50), 50);\nconst humBar = makeBar(Math.min(humidity, 100), 100);\n\nreturn {\n  json: {\n    device,\n    timestamp,\n    oledFace,\n    temperature,\n    humidity,\n    pirState,\n    aiScore,\n    gait,\n    eventType,\n    customMsg,\n    tempBar,\n    humBar,\n    receivedAt: new Date().toISOString()\n  }\n};"
       },
       "id": "node-sanitize",
       "name": "Sanitize & Enrich Telemetry",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        320,
-        480
+        300,
+        1280
       ]
     },
     {
       "parameters": {
-        "jsCode": "// ===================================================================\n// 2. ANTI-FLOOD DEBOUNCE FILTER & THREAT CLASSIFICATION\n// ===================================================================\nconst item = $input.first().json;\nconst staticData = $getWorkflowStaticData('global');\n\nconst now = Date.now();\nconst lastAlertTime = staticData.lastAlertTime || 0;\nconst lastPIRAlert = staticData.lastPIRAlert || 0;\n\nlet eventCategory = 'ROUTINE_TELEMETRY';\nlet threatLevel = 'NORMAL';\n\nif (item.pirState === 1) {\n  eventCategory = 'PIR_INTRUSION';\n  threatLevel = 'CRITICAL';\n} else if (item.distance <= 10.0) {\n  eventCategory = 'OBSTACLE_HAZARD';\n  threatLevel = 'WARNING';\n} else if (item.aiScore < 0.65) {\n  eventCategory = 'AI_ANOMALY';\n  threatLevel = 'WARNING';\n} else if (item.temperature >= 35.0) {\n  eventCategory = 'OVERHEAT_WARNING';\n  threatLevel = 'WARNING';\n}\n\nlet allowNotification = true;\n\nif (eventCategory === 'PIR_INTRUSION') {\n  if (now - lastPIRAlert < 15000) {\n    allowNotification = false;\n  } else {\n    staticData.lastPIRAlert = now;\n  }\n} else if (threatLevel === 'NORMAL' && (now - lastAlertTime < 25000)) {\n  allowNotification = false;\n}\n\nif (allowNotification) {\n  staticData.lastAlertTime = now;\n}\n\n// Prepare Groq prompt payload\nconst groqPrompt = `Telemetri Robot ${item.device}:\n- Event: ${eventCategory} (Level: ${threatLevel})\n- Sensor PIR (Gerakan): ${item.pirState === 1 ? 'AKTIF DETEKSI MANUSIA/OBJEK' : 'AMAN STANDBY'}\n- HC-SR04 Jarak: ${item.distance} cm\n- Suhu ESP32/Motor: ${item.temperature} °C, RH: ${item.humidity}%\n- Model Anomaly Score: ${item.aiScore}\n- Mode Gerak: ${item.gait}\n- Catatan Tambahan: ${item.customMsg || '-'}`;\n\nreturn {\n  json: {\n    ...item,\n    eventCategory,\n    threatLevel,\n    allowNotification,\n    groqPrompt,\n    incidentId: 'VX-' + Math.floor(100000 + Math.random() * 900000)\n  }\n};"
+        "jsCode": "const item = $input.first().json;\nconst staticData = $getWorkflowStaticData('global');\n\nconst now = Date.now();\nconst lastAlertTime = staticData.lastAlertTime || 0;\nconst lastPIRAlert = staticData.lastPIRAlert || 0;\n\nlet eventCategory = 'ROUTINE_TELEMETRY';\nlet threatLevel = 'NORMAL';\n\nif (item.pirState === 1 || item.eventType === 'PIR_INTRUSION') {\n  eventCategory = 'PIR_INTRUSION';\n  threatLevel = 'CRITICAL';\n} else if (item.temperature >= 35.0) {\n  eventCategory = 'OVERHEAT_WARNING';\n  threatLevel = 'WARNING';\n} else if (item.aiScore < 0.65) {\n  eventCategory = 'AI_ANOMALY';\n  threatLevel = 'WARNING';\n} else if (item.customMsg && item.eventType !== 'ROUTINE_TELEMETRY') {\n  eventCategory = 'SYSTEM_EVENT';\n  threatLevel = 'INFO';\n}\n\nlet allowNotification = true;\nif (eventCategory === 'PIR_INTRUSION') {\n  if (now - lastPIRAlert < 15000) {\n    allowNotification = false;\n  } else {\n    staticData.lastPIRAlert = now;\n  }\n} else if (threatLevel === 'NORMAL' && (now - lastAlertTime < 25000)) {\n  allowNotification = false;\n}\nif (allowNotification) {\n  staticData.lastAlertTime = now;\n}\n\nconst healthPct = (item.aiScore * 100).toFixed(0);\nconst groqPrompt = `Telemetri Robot ${item.device}:\n- Event: ${eventCategory} (Level: ${threatLevel})\n- Sensor PIR: ${item.pirState === 1 ? 'AKTIF DETEKSI GERAKAN' : 'AMAN STANDBY'}\n- Suhu DHT11: ${item.temperature} C, Kelembapan RH: ${item.humidity}%\n- Ekspresi OLED TX: ${item.oledFace}\n- AI Health Score: ${healthPct}% (sehat/normal jika >= 65%, anomali hanya jika < 65%)\n- Mode Gerak 4-Servo RX: ${item.gait}\n- Catatan: ${item.customMsg || '-'}`;\n\nreturn {\n  json: {\n    ...item,\n    eventCategory,\n    threatLevel,\n    allowNotification,\n    groqPrompt,\n    incidentId: 'VX-' + Math.floor(100000 + Math.random() * 900000)\n  }\n};"
       },
       "id": "node-rate-limit",
       "name": "Anti-Flood & Classifier",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        540,
-        480
+        520,
+        1280
       ]
     },
     {
@@ -63,132 +492,205 @@
         },
         "sendBody": true,
         "contentType": "json",
-        "body": "={\n  \"model\": \"llama-3.3-70b-versatile\",\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"Anda adalah VORTEX-X Tactical Security AI, analis taktis otonom untuk robot berkaki empat ESP32. Tugas Anda menganalisis telemetri sensor (PIR motion, Ultrasonic, Suhu, Gait). Berikan analisis situasi padat (maksimal 2 kalimat) dan 1 rekomendasi tindakan taktis robot dalam Bahasa Indonesia yang tegas dan profesional. Jangan bertele-tele.\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": {{ JSON.stringify($json.groqPrompt) }}\n    }\n  ],\n  \"temperature\": 0.3,\n  \"max_tokens\": 180\n}",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'qwen/qwen3.8-27b', messages: [{ role: 'system', content: 'Anda adalah VORTEX-X Tactical Security AI untuk sistem robot ESP32 Dual-Board (karya Hafiz, Fadlan, dan Devi pada mata kuliah IoT yang diampu oleh Pak Rizkima; Transmitter: PIR, DHT11, Mic INMP441, Speaker MAX98357A, OLED; Receiver: 4 servo kaki + LCD). Analisis situasi padat (maksimal 2 kalimat) dan beri 1 rekomendasi tindakan singkat dalam Bahasa Indonesia yang jelas.' }, { role: 'user', content: $json.groqPrompt }], temperature: 0.3, max_tokens: 220 }) }}",
         "options": {
           "timeout": 10000
         }
       },
       "id": "node-groq-ai",
-      "name": "Groq AI Tactical Brain (Llama-3.3)",
+      "name": "Groq AI Tactical Brain (Qwen3.8)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        780,
-        480
+        760,
+        1280
       ],
       "continueOnFail": true
     },
     {
       "parameters": {
-        "jsCode": "// Extract Groq AI completion or provide robust fallback if API key not set yet\nconst prev = $('Anti-Flood & Classifier').item.json;\nconst groqResponse = $input.first().json;\n\nlet aiInsight = '';\n\nif (groqResponse && groqResponse.choices && groqResponse.choices.length > 0) {\n  aiInsight = groqResponse.choices[0].message.content.trim();\n} else if (groqResponse && groqResponse.error) {\n  aiInsight = `[Groq API Notifikasi]: ${groqResponse.error.message || 'Kunci API Groq belum dimasukkan. Masukkan API Key Anda pada node Groq AI.'}`;\n} else {\n  // Intelligent local fallback if Groq key isn't active yet\n  if (prev.eventCategory === 'PIR_INTRUSION') {\n    aiInsight = 'Terdeteksi gerakan pada sektor depan robot. Disarankan verifikasi visual atau aktifkan alarm buzzer untuk perimeter defense.';\n  } else if (prev.eventCategory === 'OBSTACLE_HAZARD') {\n    aiInsight = 'Rintangan terdeteksi di bawah batas aman 10cm. Manuver putar arah atau berhenti darurat direkomendasikan.';\n  } else if (prev.eventCategory === 'AI_ANOMALY') {\n    aiInsight = 'Distribusi beban 8-servo tidak simetris. Reset stance ke posisi STAND direkomendasikan.';\n  } else if (prev.eventCategory === 'OVERHEAT_WARNING') {\n    aiInsight = 'Suhu mikrokontroler melebihi 35°C. Istirahatkan motor servo sejenak.';\n  } else {\n    aiInsight = 'Semua subsistem berjalan dalam batas toleransi normal.';\n  }\n}\n\nreturn {\n  json: {\n    ...prev,\n    aiInsight\n  }\n};"
+        "jsCode": "const prev = $('Anti-Flood & Classifier').first().json;\nconst groqResponse = $input.first().json;\n\nlet aiInsight = '';\n\nif (groqResponse && groqResponse.choices && groqResponse.choices.length > 0) {\n  aiInsight = String(groqResponse.choices[0].message.content || '').replace(/<think>[\\s\\S]*?<\\/think>/gi, '').trim();\n} else if (groqResponse && groqResponse.error) {\n  aiInsight = `[Groq API]: ${groqResponse.error.message || 'Groq API Error'}`;\n} else {\n  if (prev.eventCategory === 'PIR_INTRUSION') {\n    aiInsight = 'Sensor PIR mendeteksi gerakan. Sistem suara TX siap berinteraksi dan servo RX siap lambaian respons.';\n  } else if (prev.eventCategory === 'OVERHEAT_WARNING') {\n    aiInsight = 'Suhu DHT11 melebihi 35C. Istirahatkan 4 servo pada mode RELAX sejenak.';\n  } else if (prev.eventCategory === 'AI_ANOMALY') {\n    aiInsight = 'Terdeteksi anomali telemetri. Disarankan mengembalikan posisi servo RX ke STAND.';\n  } else {\n    aiInsight = 'Semua subsistem TX dan RX berjalan dalam batas toleransi normal.';\n  }\n}\n\nreturn {\n  json: {\n    ...prev,\n    aiInsight\n  }\n};"
       },
       "id": "node-parse-ai",
       "name": "Parse Groq AI Insight",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1020,
-        480
+        1000,
+        1280
       ]
     },
     {
       "parameters": {
-        "dataType": "string",
-        "value1": "={{ $json.eventCategory }}",
         "rules": {
-          "rules": [
+          "values": [
             {
-              "value2": "PIR_INTRUSION",
-              "outputKey": "pir"
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.eventCategory }}",
+                    "rightValue": "PIR_INTRUSION",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "PIR_INTRUSION"
             },
             {
-              "value2": "OBSTACLE_HAZARD",
-              "outputKey": "obstacle"
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.eventCategory }}",
+                    "rightValue": "OVERHEAT_WARNING",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "OVERHEAT_WARNING"
             },
             {
-              "value2": "AI_ANOMALY",
-              "outputKey": "ai"
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.eventCategory }}",
+                    "rightValue": "AI_ANOMALY",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "AI_ANOMALY"
             },
             {
-              "value2": "OVERHEAT_WARNING",
-              "outputKey": "overheat"
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.eventCategory }}",
+                    "rightValue": "SYSTEM_EVENT",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "SYSTEM_EVENT"
             }
           ]
         },
-        "fallbackOutput": "routine"
+        "options": {
+          "fallbackOutput": "extra"
+        }
       },
       "id": "node-switch-category",
       "name": "Route by Threat Category",
       "type": "n8n-nodes-base.switch",
       "typeVersion": 3,
       "position": [
-        1260,
-        480
+        1240,
+        1280
       ]
     },
     {
       "parameters": {
-        "jsCode": "const d = $input.first().json;\nconst timeStr = new Date(d.timestamp).toLocaleTimeString('id-ID', { hour12: false });\n\nconst text = `🚨 <b>[ALARM KEAMANAN] DETEKSI GERAKAN PIR</b> 🚨\n━━━━━━━━━━━━━━━━━━━━━━━━━━\nRobot <b>${d.device}</b> mendeteksi pancaran inframerah dan gerakan objek di depan sensor!\n\n🆔 <b>ID Insiden:</b> <code>${d.incidentId}</code>\n⏱ <b>Waktu Deteksi:</b> <code>${timeStr} WIB</code>\n📍 <b>Status Gait:</b> <code>${d.gait}</code>\n\n📊 <b>TELEMETRI SENSOR SAAT KEJADIAN:</b>\n<code>┌─────────────────┬──────────────┐\n│ Sensor          │ Pembacaan    │\n├─────────────────┼──────────────┤\n│ Sensor PIR      │ 🔴 HIGH (1)  │\n│ Jarak HC-SR04   │ ${d.distance.toFixed(1).padStart(7)} cm │\n│ Suhu Lingkungan │ ${d.temperature.toFixed(1).padStart(7)} °C │\n│ Kelembapan RH   │ ${d.humidity.toFixed(1).padStart(7)} %  │\n│ AI Health Score │ ${(d.aiScore * 100).toFixed(0).padStart(7)} %  │\n└─────────────────┴──────────────┘</code>\n\n🧠 <b>ANALISIS TAKTIS GROQ AI (Llama-3.3):</b>\n<i>${d.aiInsight}</i>\n\n⚠️ <i>Robot mempertahankan mode siaga. Lakukan kendali cepat melalui tombol di bawah:</i>`;\n\nconst replyMarkup = {\n  inline_keyboard: [\n    [\n      { text: \"🛑 HENTIKAN DARURAT (E-STOP)\", callback_data: \"cmd_stop\" },\n      { text: \"🧎 MERUNDUK (CROUCH)\", callback_data: \"cmd_crouch\" }\n    ],\n    [\n      { text: \"🔊 BUNYIKAN ALARM BUZZER\", callback_data: \"cmd_alarm\" },\n      { text: \"🛡️ PATROLI PERIMETER\", callback_data: \"cmd_patrol\" }\n    ],\n    [\n      { text: \"🌐 BUKA DASHBOARD KONTROL\", url: \"http://192.168.4.1\" }\n    ]\n  ]\n};\n\nreturn {\n  json: {\n    chat_id: \"8707654343\",\n    text,\n    parse_mode: \"HTML\",\n    disable_notification: false,\n    reply_markup: replyMarkup,\n    incidentId: d.incidentId,\n    eventCategory: d.eventCategory\n  }\n};"
+        "jsCode": "const d = $input.first().json;\nconst esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\nconst timeStr = new Date(d.timestamp).toLocaleTimeString('id-ID', { timeZone: 'Asia/Jakarta', hour12: false });\n\nconst text = `🚨 <b>[ALARM KEAMANAN] DETEKSI GERAKAN PIR</b> 🚨\n━━━━━━━━━━━━━━━━━━━━━━━━━━\nRobot <b>${esc(d.device)}</b> mendeteksi gerakan di depan sensor PIR!\n\n🆔 <b>ID Insiden:</b> <code>${esc(d.incidentId)}</code>\n⏱ <b>Waktu Deteksi:</b> <code>${esc(timeStr)} WIB</code>\n📍 <b>Gait 4-Servo RX:</b> <code>${esc(d.gait)}</code>\n\n📊 <b>TELEMETRI SENSOR:</b>\n<code>• Sensor PIR      : 🔴 HIGH (1)\n• Suhu DHT11      : ${d.temperature.toFixed(1)} °C [${d.tempBar}]\n• Kelembapan RH   : ${d.humidity.toFixed(1)} %\n• Ekspresi OLED   : ${esc(d.oledFace)}\n• AI Health Score : ${(d.aiScore * 100).toFixed(0)} %</code>\n\n🧠 <b>ANALISIS GROQ AI (Qwen3.8):</b>\n<i>${esc(d.aiInsight)}</i>`;\n\nconst reply_markup = {\n  inline_keyboard: [\n    [\n      { text: '🛑 RELAKS (STOP)', callback_data: 'cmd_relax' },\n      { text: '👋 LAMBAIKAN (WAVE)', callback_data: 'cmd_wave' }\n    ],\n    [\n      { text: '🔊 TEST SPEAKER', callback_data: 'cmd_beep' },\n      { text: '🕴️ STAND NORMAL', callback_data: 'cmd_stand' }\n    ]\n  ]\n};\n\nreturn { json: { chat_id: '8707654343', text, parse_mode: 'HTML', disable_notification: false, reply_markup } };"
       },
       "id": "node-fmt-pir",
       "name": "Format Telegram: PIR Intrusion",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1540,
-        200
+        1520,
+        960
       ]
     },
     {
       "parameters": {
-        "jsCode": "const d = $input.first().json;\nconst timeStr = new Date(d.timestamp).toLocaleTimeString('id-ID', { hour12: false });\n\nconst text = `🛑 <b>[PERINGATAN] HALANGAN KRITIS TERDETEKSI</b>\n━━━━━━━━━━━━━━━━━━━━━━━━━━\nRobot <b>${d.device}</b> mendeteksi halangan terlalu dekat di jalur gerak!\n\n📏 <b>Jarak Rintangan:</b> <code>${d.distance} cm</code> (Batas Aman: > 10 cm)\n<code>[${d.distanceBar}] BAHAYA TABRAKAN</code>\n⏱ <b>Waktu:</b> <code>${timeStr} WIB</code> | Gait: <code>${d.gait}</code>\n\n🧠 <b>REKOMENDASI GROQ AI:</b>\n<i>${d.aiInsight}</i>`;\n\nconst replyMarkup = {\n  inline_keyboard: [\n    [\n      { text: \"🛑 STOP DARURAT\", callback_data: \"cmd_stop\" },\n      { text: \"◀️ BELOK KIRI\", callback_data: \"cmd_left\" },\n      { text: \"▶️ BELOK KANAN\", callback_data: \"cmd_right\" }\n    ],\n    [\n      { text: \"🌐 Buka Mission Control\", url: \"http://192.168.4.1\" }\n    ]\n  ]\n};\n\nreturn {\n  json: {\n    chat_id: \"8707654343\",\n    text,\n    parse_mode: \"HTML\",\n    disable_notification: false,\n    reply_markup: replyMarkup,\n    incidentId: d.incidentId,\n    eventCategory: d.eventCategory\n  }\n};"
-      },
-      "id": "node-fmt-obstacle",
-      "name": "Format Telegram: Obstacle Hazard",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        1540,
-        360
-      ]
-    },
-    {
-      "parameters": {
-        "jsCode": "const d = $input.first().json;\nconst timeStr = new Date(d.timestamp).toLocaleTimeString('id-ID', { hour12: false });\n\nconst text = `🧠 <b>[DIAGNOSTIK AI] ANOMALI TELEMETRI TERDETEKSI</b>\n━━━━━━━━━━━━━━━━━━━━━━━━━━\nModel <b>Isolation Forest Local AI</b> mendeteksi penyimpangan pola telemetri pada <b>${d.device}</b>.\n\n📉 <b>Health Score:</b> <code>${(d.aiScore * 100).toFixed(0)}%</code> (Threshold Normal: > 65%)\n⏱ <b>Waktu Analisis:</b> <code>${timeStr} WIB</code>\n\n🧠 <b>ANALISIS MODEL GROQ AI (Llama-3.3):</b>\n<i>${d.aiInsight}</i>\n\n<code>• Suhu Motor/ESP: ${d.temperature} °C\n• Jarak Sonar   : ${d.distance} cm\n• Kelembapan    : ${d.humidity} %</code>`;\n\nconst replyMarkup = {\n  inline_keyboard: [\n    [\n      { text: \"🕴️ RESET POSTUR KE STAND\", callback_data: \"cmd_stand\" },\n      { text: \"📊 EXPORT LOG TELEMETRI\", callback_data: \"cmd_export\" }\n    ]\n  ]\n};\n\nreturn {\n  json: {\n    chat_id: \"8707654343\",\n    text,\n    parse_mode: \"HTML\",\n    disable_notification: true,\n    reply_markup: replyMarkup,\n    incidentId: d.incidentId,\n    eventCategory: d.eventCategory\n  }\n};"
-      },
-      "id": "node-fmt-ai",
-      "name": "Format Telegram: AI Anomaly",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        1540,
-        520
-      ]
-    },
-    {
-      "parameters": {
-        "jsCode": "const d = $input.first().json;\nconst timeStr = new Date(d.timestamp).toLocaleTimeString('id-ID', { hour12: false });\n\nconst text = `🌡️ <b>[SUHU TINGGI] PERINGATAN TERMAL ESP32</b>\n━━━━━━━━━━━━━━━━━━━━━━━━━━\nSensor DHT11 mendeteksi suhu komponen robot <b>${d.device}</b> mencapai <b>${d.temperature} °C</b>!\n\n<code>[${d.tempBar}] SUHU PANAS</code>\n💧 <b>Kelembapan RH:</b> <code>${d.humidity} %</code>\n⏱ <b>Waktu:</b> <code>${timeStr} WIB</code>\n\n🧠 <b>REKOMENDASI TAKTIS GROQ AI:</b>\n<i>${d.aiInsight}</i>`;\n\nconst replyMarkup = {\n  inline_keyboard: [\n    [\n      { text: \"🧎 MERUNDUK & ISTIRAHAT\", callback_data: \"cmd_crouch\" },\n      { text: \"🛑 MATIKAN TORSI SERVO\", callback_data: \"cmd_stop\" }\n    ]\n  ]\n};\n\nreturn {\n  json: {\n    chat_id: \"8707654343\",\n    text,\n    parse_mode: \"HTML\",\n    disable_notification: false,\n    reply_markup: replyMarkup,\n    incidentId: d.incidentId,\n    eventCategory: d.eventCategory\n  }\n};"
+        "jsCode": "const d = $input.first().json;\nconst esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\nconst timeStr = new Date(d.timestamp).toLocaleTimeString('id-ID', { timeZone: 'Asia/Jakarta', hour12: false });\n\nconst text = `🌡️ <b>[SUHU TINGGI] PERINGATAN TERMAL DHT11</b>\n━━━━━━━━━━━━━━━━━━━━━━━━━━\nSensor DHT11 mendeteksi suhu sekitar robot <b>${esc(d.device)}</b> mencapai <b>${d.temperature.toFixed(1)} °C</b>!\n\n<code>[${d.tempBar}] SUHU PANAS</code>\n💧 <b>Kelembapan RH:</b> <code>${d.humidity.toFixed(1)} %</code>\n⏱ <b>Waktu:</b> <code>${esc(timeStr)} WIB</code>\n\n🧠 <b>REKOMENDASI GROQ AI (Qwen3.8):</b>\n<i>${esc(d.aiInsight)}</i>`;\n\nconst reply_markup = {\n  inline_keyboard: [\n    [\n      { text: '🧎 MERUNDUK', callback_data: 'cmd_crouch' },\n      { text: '🛑 RELAKS SERVO', callback_data: 'cmd_relax' }\n    ]\n  ]\n};\n\nreturn { json: { chat_id: '8707654343', text, parse_mode: 'HTML', disable_notification: false, reply_markup } };"
       },
       "id": "node-fmt-overheat",
       "name": "Format Telegram: Overheat",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1540,
-        680
+        1520,
+        1120
       ]
     },
     {
       "parameters": {
-        "jsCode": "const d = $input.first().json;\nconst timeStr = new Date(d.timestamp).toLocaleTimeString('id-ID', { hour12: false });\n\nconst text = `🤖 <b>[STATUS RUTIN] TELEMETRI VORTEX-X</b>\n━━━━━━━━━━━━━━━━━━━━━━━━━━\n⏱ <b>Update:</b> <code>${timeStr} WIB</code> | Status: 🟢 <b>NORMAL</b>\n\n<code>• Jarak Depan : ${d.distance.toFixed(1)} cm\n• Suhu ESP32  : ${d.temperature.toFixed(1)} °C\n• Kelembapan  : ${d.humidity.toFixed(1)} %\n• Sensor PIR  : 🟢 Standby (0)\n• AI Health   : ${(d.aiScore * 100).toFixed(0)} %\n• Mode Gait   : ${d.gait}</code>\n\n🧠 <b>EVALUASI GROQ AI:</b>\n<i>${d.aiInsight}</i>`;\n\nreturn {\n  json: {\n    chat_id: \"8707654343\",\n    text,\n    parse_mode: \"HTML\",\n    disable_notification: true,\n    incidentId: d.incidentId,\n    eventCategory: d.eventCategory\n  }\n};"
+        "jsCode": "const d = $input.first().json;\nconst esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\nconst timeStr = new Date(d.timestamp).toLocaleTimeString('id-ID', { timeZone: 'Asia/Jakarta', hour12: false });\n\nconst text = `🧠 <b>[DIAGNOSTIK AI] ANOMALI TELEMETRI TERDETEKSI</b>\n━━━━━━━━━━━━━━━━━━━━━━━━━━\nModel lokal mendeteksi penyimpangan pola telemetri pada <b>${esc(d.device)}</b>.\n\n📉 <b>Health Score:</b> <code>${(d.aiScore * 100).toFixed(0)}%</code> (Normal: &gt; 65%)\n⏱ <b>Waktu:</b> <code>${esc(timeStr)} WIB</code>\n\n🧠 <b>ANALISIS GROQ AI (Qwen3.8):</b>\n<i>${esc(d.aiInsight)}</i>\n\n<code>• Suhu DHT11   : ${d.temperature.toFixed(1)} °C\n• Kelembapan   : ${d.humidity.toFixed(1)} %\n• Ekspresi OLED: ${esc(d.oledFace)}</code>`;\n\nconst reply_markup = {\n  inline_keyboard: [\n    [\n      { text: '🕴️ RESET KE STAND', callback_data: 'cmd_stand' }\n    ]\n  ]\n};\n\nreturn { json: { chat_id: '8707654343', text, parse_mode: 'HTML', disable_notification: true, reply_markup } };"
+      },
+      "id": "node-fmt-ai",
+      "name": "Format Telegram: AI Anomaly",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1520,
+        1280
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $input.first().json;\nconst esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\nconst timeStr = new Date(d.timestamp).toLocaleTimeString('id-ID', { timeZone: 'Asia/Jakarta', hour12: false });\n\nconst text = `📡 <b>[EVENT SISTEM] ${esc(d.eventType)}</b>\n━━━━━━━━━━━━━━━━━━━━━━━━━━\n⏱ <code>${esc(timeStr)} WIB</code> | Robot: <b>${esc(d.device)}</b>\n📝 <b>Pesan:</b> ${esc(d.customMsg || '-')}\n\n<code>• Mode Gait  : ${esc(d.gait)}\n• Ekspresi   : ${esc(d.oledFace)}\n• Suhu / RH  : ${d.temperature.toFixed(1)} °C / ${d.humidity.toFixed(1)} %</code>\n\n🧠 <b>Catatan Groq AI (Qwen3.8):</b>\n<i>${esc(d.aiInsight)}</i>`;\n\nreturn { json: { chat_id: '8707654343', text, parse_mode: 'HTML', disable_notification: false } };"
+      },
+      "id": "node-fmt-system",
+      "name": "Format Telegram: System Event",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1520,
+        1440
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $input.first().json;\nconst esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\nconst timeStr = new Date(d.timestamp).toLocaleTimeString('id-ID', { timeZone: 'Asia/Jakarta', hour12: false });\n\nconst text = `🤖 <b>[STATUS RUTIN] TELEMETRI VORTEX-X</b>\n━━━━━━━━━━━━━━━━━━━━━━━━━━\n⏱ <b>Update:</b> <code>${esc(timeStr)} WIB</code> | Status: 🟢 <b>NORMAL</b>\n\n<code>• Suhu DHT11   : ${d.temperature.toFixed(1)} °C\n• Kelembapan   : ${d.humidity.toFixed(1)} %\n• Sensor PIR   : 🟢 Standby (0)\n• Ekspresi OLED: ${esc(d.oledFace)}\n• AI Health    : ${(d.aiScore * 100).toFixed(0)} %\n• Mode 4-Servo : ${esc(d.gait)}</code>\n\n🧠 <b>EVALUASI GROQ AI (Qwen3.8):</b>\n<i>${esc(d.aiInsight)}</i>`;\n\nreturn { json: { chat_id: '8707654343', text, parse_mode: 'HTML', disable_notification: true } };"
       },
       "id": "node-fmt-routine",
       "name": "Format Telegram: Routine Digest",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1540,
-        840
+        1520,
+        1600
       ]
     },
     {
@@ -197,38 +699,39 @@
         "url": "https://api.telegram.org/bot8281785582:AAGWNwFMIRD6kRjw9-QrVcM8WuXmPMP6UMU/sendMessage",
         "sendBody": true,
         "contentType": "json",
-        "body": "={{ $json }}",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
         "options": {
           "timeout": 8000
         }
       },
       "id": "node-telegram-send",
-      "name": "Kirim Pesan Telegram Bot",
+      "name": "Kirim Pesan Telegram Bot (Telemetry)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1880,
-        480
+        1860,
+        1280
       ],
       "continueOnFail": true
     },
     {
       "parameters": {
-        "jsCode": "const prev = $('Anti-Flood & Classifier').item.json;\nconst groqData = $('Parse Groq AI Insight').item.json;\n\nreturn {\n  json: {\n    event_id: prev.incidentId,\n    category: prev.eventCategory,\n    device: prev.device,\n    distance_cm: prev.distance,\n    temperature_c: prev.temperature,\n    humidity_pct: prev.humidity,\n    pir_state: prev.pirState,\n    ai_score: prev.aiScore,\n    gait: prev.gait,\n    ai_insight: groqData.aiInsight,\n    telegram_dispatched: true,\n    logged_at: new Date().toISOString()\n  }\n};"
+        "jsCode": "const prev = $('Anti-Flood & Classifier').first().json;\nconst groqData = $('Parse Groq AI Insight').first().json;\nconst tgRes = $input.first().json || {};\n\nreturn {\n  json: {\n    event_id: prev.incidentId,\n    category: prev.eventCategory,\n    device: prev.device,\n    oled_face: prev.oledFace,\n    temperature_c: prev.temperature,\n    humidity_pct: prev.humidity,\n    pir_state: prev.pirState,\n    ai_score: prev.aiScore,\n    gait: prev.gait,\n    ai_insight: groqData.aiInsight,\n    telegram_sent: Boolean(tgRes.ok),\n    logged_at: new Date().toISOString()\n  }\n};"
       },
       "id": "node-audit-log",
       "name": "Audit Logging Formatter",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2140,
-        480
+        2120,
+        1280
       ]
     },
     {
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={\n  \"status\": \"success\",\n  \"incident_id\": \"{{ $('Audit Logging Formatter').item.json.event_id }}\",\n  \"category\": \"{{ $('Audit Logging Formatter').item.json.category }}\",\n  \"ai_model\": \"Groq Llama-3.3-70b\",\n  \"telegram_sent\": true,\n  \"processed_at\": new Date().toISOString()\n}",
+        "responseBody": "={{ JSON.stringify({ status: 'success', incident_id: $('Audit Logging Formatter').first().json.event_id, category: $('Audit Logging Formatter').first().json.category, ai_model: 'Groq Qwen3.8-27B', telegram_sent: $('Audit Logging Formatter').first().json.telegram_sent, processed_at: $('Audit Logging Formatter').first().json.logged_at }) }}",
         "options": {
           "responseCode": 200
         }
@@ -238,12 +741,209 @@
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
       "position": [
-        2380,
-        480
+        2360,
+        1280
       ]
     }
   ],
   "connections": {
+    "Webhook: Terima Audio Mic (.wav)": {
+      "main": [
+        [
+          {
+            "node": "Prepare WAV Binary & Sensor",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare WAV Binary & Sensor": {
+      "main": [
+        [
+          {
+            "node": "Groq Whisper STT (Mic ke Teks)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Groq Whisper STT (Mic ke Teks)": {
+      "main": [
+        [
+          {
+            "node": "Susun Konteks AI Agent & Sensor",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Susun Konteks AI Agent & Sensor": {
+      "main": [
+        [
+          {
+            "node": "AI Agent Brain (Groq Qwen3.8)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent Brain (Groq Qwen3.8)": {
+      "main": [
+        [
+          {
+            "node": "Extract AI Reply & Klasifikasi",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract AI Reply & Klasifikasi": {
+      "main": [
+        [
+          {
+            "node": "TTS WAV (Groq Orpheus - Pakai Key Groq)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "TTS WAV (Groq Orpheus - Pakai Key Groq)": {
+      "main": [
+        [
+          {
+            "node": "Ensure Valid WAV Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ensure Valid WAV Output": {
+      "main": [
+        [
+          {
+            "node": "Respond Audio WAV ke Speaker ESP32",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond Audio WAV ke Speaker ESP32": {
+      "main": [
+        [
+          {
+            "node": "Siapkan Laporan Voice & Sensor",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Siapkan Laporan Voice & Sensor": {
+      "main": [
+        [
+          {
+            "node": "Route Laporan Voice ke Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route Laporan Voice ke Telegram": {
+      "main": [
+        [
+          {
+            "node": "Format Telegram: Suara + PIR Alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format Telegram: Suara + Suhu Panas",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format Telegram: Suara + Aksi Robot",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format Telegram: Percakapan Voice AI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Telegram: Suara + PIR Alert": {
+      "main": [
+        [
+          {
+            "node": "Kirim Pesan Telegram Bot (Voice AI)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Telegram: Suara + Suhu Panas": {
+      "main": [
+        [
+          {
+            "node": "Kirim Pesan Telegram Bot (Voice AI)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Telegram: Suara + Aksi Robot": {
+      "main": [
+        [
+          {
+            "node": "Kirim Pesan Telegram Bot (Voice AI)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Telegram: Percakapan Voice AI": {
+      "main": [
+        [
+          {
+            "node": "Kirim Pesan Telegram Bot (Voice AI)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Kirim Pesan Telegram Bot (Voice AI)": {
+      "main": [
+        [
+          {
+            "node": "Audit Log Voice AI & Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
     "Webhook Ingestion (ESP32 / Dashboard)": {
       "main": [
         [
@@ -270,14 +970,14 @@
       "main": [
         [
           {
-            "node": "Groq AI Tactical Brain (Llama-3.3)",
+            "node": "Groq AI Tactical Brain (Qwen3.8)",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Groq AI Tactical Brain (Llama-3.3)": {
+    "Groq AI Tactical Brain (Qwen3.8)": {
       "main": [
         [
           {
@@ -310,7 +1010,7 @@
         ],
         [
           {
-            "node": "Format Telegram: Obstacle Hazard",
+            "node": "Format Telegram: Overheat",
             "type": "main",
             "index": 0
           }
@@ -324,7 +1024,7 @@
         ],
         [
           {
-            "node": "Format Telegram: Overheat",
+            "node": "Format Telegram: System Event",
             "type": "main",
             "index": 0
           }
@@ -342,29 +1042,7 @@
       "main": [
         [
           {
-            "node": "Kirim Pesan Telegram Bot",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Format Telegram: Obstacle Hazard": {
-      "main": [
-        [
-          {
-            "node": "Kirim Pesan Telegram Bot",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Format Telegram: AI Anomaly": {
-      "main": [
-        [
-          {
-            "node": "Kirim Pesan Telegram Bot",
+            "node": "Kirim Pesan Telegram Bot (Telemetry)",
             "type": "main",
             "index": 0
           }
@@ -375,7 +1053,29 @@
       "main": [
         [
           {
-            "node": "Kirim Pesan Telegram Bot",
+            "node": "Kirim Pesan Telegram Bot (Telemetry)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Telegram: AI Anomaly": {
+      "main": [
+        [
+          {
+            "node": "Kirim Pesan Telegram Bot (Telemetry)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Telegram: System Event": {
+      "main": [
+        [
+          {
+            "node": "Kirim Pesan Telegram Bot (Telemetry)",
             "type": "main",
             "index": 0
           }
@@ -386,14 +1086,14 @@
       "main": [
         [
           {
-            "node": "Kirim Pesan Telegram Bot",
+            "node": "Kirim Pesan Telegram Bot (Telemetry)",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Kirim Pesan Telegram Bot": {
+    "Kirim Pesan Telegram Bot (Telemetry)": {
       "main": [
         [
           {
@@ -425,13 +1125,13 @@
       "name": "VORTEX-X"
     },
     {
-      "name": "Groq AI (Llama-3.3)"
+      "name": "Voice AI + Telemetry"
     },
     {
-      "name": "Telegram Bot Sentinel"
+      "name": "Telegram Bot"
     },
     {
-      "name": "ESP32 IoT"
+      "name": "Groq Qwen3.8 + Whisper"
     }
   ]
 }

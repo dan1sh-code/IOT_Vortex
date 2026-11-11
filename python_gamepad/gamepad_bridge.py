@@ -118,7 +118,7 @@ class VortexGamepadController:
         url = f"http://{self.esp_ip}/command?cmd={cmd}&speed={self.current_speed}"
         try:
             res = requests.get(url, timeout=0.25)
-            status_msg = f"{Colors.CYAN}[HTTP 200]{Colors.RESET} Perintah: {Colors.BOLD}{cmd:<8}{Colors.RESET} (PIR/Dist OK)"
+            status_msg = f"{Colors.CYAN}[HTTP 200]{Colors.RESET} Perintah: {Colors.BOLD}{cmd:<8}{Colors.RESET} (OLED/LCD/PIR OK)"
             sys.stdout.write(f"\r[{timestamp}] {status_msg}   ")
             sys.stdout.flush()
         except requests.exceptions.RequestException as e:

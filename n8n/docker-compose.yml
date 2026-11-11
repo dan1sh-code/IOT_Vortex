@@ -8,10 +8,11 @@ services:
     ports:
       - "5678:5678"
     environment:
-      - N8N_HOST=localhost
+      - N8N_HOST=10.63.8.214
       - N8N_PORT=5678
       - N8N_PROTOCOL=http
-      - WEBHOOK_URL=http://localhost:5678/
+      - WEBHOOK_URL=http://10.63.8.214:5678/
+      - N8N_SECURE_COOKIE=false
       - GENERIC_TIMEZONE=Asia/Jakarta
       - TZ=Asia/Jakarta
       - N8N_DEFAULT_BINARY_DATA_MODE=filesystem

@@ -6,27 +6,23 @@ Panduan ini menjelaskan langkah demi langkah merakit komponen kelistrikan dan su
 
 ## 1. Bentuk Jadi Robot VORTEX-X (Fully Assembled)
 
-Berikut adalah wujud fisik jadi robot berkaki empat **VORTEX-X** setelah seluruh rangka, 8 servo SG90, sensor ultrasonik HC-SR04 (mata), sensor PIR (hidung), dan modul ESP32 dirakit secara presisi:
+Berikut adalah wujud fisik dasar robot berkaki empat **VORTEX-X** setelah seluruh rangka, 8 servo SG90, layar OLED 0.96" (mata digital), panel LCD 16×2 (panel badan), sensor PIR (hidung), dan modul ESP32 dirakit secara presisi:
 
-![Bentuk Jadi Robot VORTEX-X](file:///d:/IOT_Vortex/vortex_spider_assembled.jpg)
+![Bentuk Jadi Robot VORTEX-X](file:///d:/IOT_Vortex/docs/vortex_spider_assembled.jpg)
 
-> 💡 **File Gambar Bentuk Jadi:**
-> - [vortex_spider_assembled.jpg](file:///d:/IOT_Vortex/vortex_spider_assembled.jpg)
-> - Terletak juga pada folder [docs/vortex_spider_assembled.jpg](file:///d:/IOT_Vortex/docs/vortex_spider_assembled.jpg)
+> 💡 **File Gambar Bentuk Jadi:** [docs/vortex_spider_assembled.jpg](file:///d:/IOT_Vortex/docs/vortex_spider_assembled.jpg)
 
 ### Anatomi Fisik Robot Jadi:
-1. **Kepala Sensor Depan:**
-   - Bagian atas: Sensor ultrasonik **HC-SR04** berbentuk dua tabung bundar yang berfungsi sebagai "mata" pendeteksi jarak rintangan.
+1. **Kepala Sensor & Wajah Depan:**
+   - Bagian atas: Layar **OLED 0.96" SSD1306** yang menampilkan animasi dua mata digital ekspresif robot (pada unit Transmitter).
    - Bagian bawah: Kubah putih **Sensor PIR (HC-SR501/AM312)** menghadap lurus ke depan sebagai "radar" pendeteksi radiasi termal tubuh manusia/makhluk hidup.
 2. **Dek Sasis Atas (Upper Deck):**
-   - Menampung mikrokontroler **ESP32 DevKit V1**, modul step-down buck converter 5V, dan paket baterai **Li-Po 2S 7.4V** yang diikat rapi dengan sabuk velcro.
+   - Menampung mikrokontroler **ESP32 DevKit V1**, layar **LCD 16×2 I2C** penampil data suhu/kelembapan/status, modul step-down buck converter 5V, dan paket baterai **Li-Po 2S 7.4V**.
 3. **4 Kaki Artikulasi Laba-laba (Spider Legs):**
    - Terdiri dari 4 sudut simetris: **Depan Kiri (FL)**, **Depan Kanan (FR)**, **Belakang Kiri (RL)**, dan **Belakang Kanan (RR)**.
-   - Setiap kaki memiliki **2 sendi bergerak**:
-     - *Sendi Hip (Pangkal Paha):* Mengayunkan kaki maju dan mundur di bidang horizontal.
-     - *Sendi Lift / Knee (Lutut):* Mengangkat dan menurunkan telapak kaki di bidang vertikal.
+   - Pada konfigurasi 4-servo bawah (Receiver), tiap kaki menggunakan satu servo pada engsel bawah untuk gerakan melambai.
 4. **Telapak Kaki (Foot Pads):**
-   - Ujung kaki dilengkapi bantalan karet bulat anti-slip agar robot mencengkeram kuat permukaan lantai saat melangkah (*trot gait*).
+   - Ujung kaki dilengkapi bantalan karet bulat anti-slip.
 
 ---
 
@@ -34,26 +30,22 @@ Berikut adalah wujud fisik jadi robot berkaki empat **VORTEX-X** setelah seluruh
 
 Gambar diagram teknik berikut menunjukkan urutan perakitan sendi, dudukan servo, baut M2, dan pemasangan sasis utama:
 
-![Diagram Perakitan Langkah demi Langkah VORTEX-X](file:///d:/IOT_Vortex/vortex_assembly_steps.jpg)
+![Diagram Perakitan Langkah demi Langkah VORTEX-X](file:///d:/IOT_Vortex/docs/vortex_assembly_steps.jpg)
 
-> 💡 **File Diagram Teknik Perakitan:**
-> - [vortex_assembly_steps.jpg](file:///d:/IOT_Vortex/vortex_assembly_steps.jpg)
-> - Terletak juga pada folder [docs/vortex_assembly_steps.jpg](file:///d:/IOT_Vortex/docs/vortex_assembly_steps.jpg)
+> 💡 **File Diagram Teknik Perakitan:** [docs/vortex_assembly_steps.jpg](file:///d:/IOT_Vortex/docs/vortex_assembly_steps.jpg)
 
 ---
 
 ## 3. Langkah-Langkah Perakitan dari Nol Menjadi Spider
 
-### TAHAP 0: Kalibrasi Netral 90° Seluruh Servo (ATURAN EMAS!)
+### TAHAP 0: Kalibrasi Netral Servo
 > [!IMPORTANT]
-> **JANGAN PERNAH** memasang tanduk (*horn*) servo dan mengencangkan baut mekanik kaki sebelum servo disetel ke sudut netral **90° secara elektrik**.
-> Jika servo dipasang saat posisi motor internal berada di sudut sembarang (misal 0° atau 180°), saat robot pertama kali dinyalakan, motor akan berputar paksa ke 90° dan dapat mematahkan rangka kaki atau merusak roda gigi (*gear*) servo SG90.
+> Saat pertama kali dinyalakan, firmware **VORTEX-X Receiver** langsung berada pada mode **RELAX (diam bebas getar)**. Anda dapat mengatur sudut awal masing-masing servo secara halus menggunakan slider di Dashboard Web sebelum menekan **`💾 SIMPAN TITIK AWAL`**.
 
-#### Cara Kalibrasi 90° Cepat:
-1. Upload program firmware [vortex_x_esp32_gamepad.ino](file:///d:/IOT_Vortex/firmware/vortex_x_esp32_gamepad.ino) ke ESP32.
-2. Hubungkan pin sinyal ke-8 servo ke GPIO yang sesuai (13, 14, 16, 17, 18, 19, 21, 22) dan beri daya 5V.
-3. Program akan secara otomatis mengunci seluruh servo ke sudut **90°**.
-4. Biarkan posisi gear servo tetap pada sudut ini saat Anda mulai memasang *horn* mekanik.
+#### Cara Kalibrasi Cepat:
+1. Upload program firmware [vortex_x_receiver.ino](file:///d:/IOT_Vortex/firmware/vortex_x_receiver/vortex_x_receiver.ino) ke ESP32 Receiver.
+2. Hubungkan pin sinyal ke-4 servo kaki bawah ke GPIO yang sesuai (`13 = Belakang Kiri`, `14 = Depan Kiri`, `18 = Belakang Kanan`, `21 = Depan Kanan`) dan beri daya 5V.
+3. Hubungkan Dashboard ke Transmitter, lalu geser slider setiap kaki sampai pas dan klik **`💾 SIMPAN TITIK AWAL`**.
 
 ---
 
@@ -103,11 +95,11 @@ Gambar diagram teknik berikut menunjukkan urutan perakitan sendi, dudukan servo,
 
 ---
 
-### LANGKAH 5: Pemasangan Kepala Sensor (Mata HC-SR04 & Hidung PIR)
-1. Ambil braket kepala sensor depan (*front sensor faceplate*).
-2. Masukkan dua tabung pemancar dan penerima ultrasonik **HC-SR04** ke lubang bundar atas sehingga menyerupai dua mata robot. Kunci dengan titik lem tembak tipis di bagian belakang jika dudukan sedikit longgar.
-3. Pasang kubah putih **Sensor PIR (HC-SR501/AM312)** tepat di lubang tengah bawah di antara kedua mata ultrasonik, menghadap lurus ke depan.
-4. Pasang modul **DHT11** di sisi samping dalam bodi yang terlindung dari paparan langsung sinar matahari.
+### LANGKAH 5: Pemasangan Layar Wajah OLED, LCD 16x2 & Sensor Depan
+1. Pasang layar **OLED 0.96" I2C** di bagian kepala depan (*front faceplate*) agar berfungsi sebagai wajah/mata robot.
+2. Pasang layar **LCD 16×2 I2C** pada bagian atas badan/sasis agar mudah membaca suhu, kelembapan, dan status IP secara langsung.
+3. Pasang kubah putih **Sensor PIR (HC-SR501/AM312)** di lubang bagian bawah kepala, menghadap lurus ke depan.
+4. Pasang modul **DHT11** di sisi samping bodi yang bebas dari hembusan panas regulator/baterai.
 5. Tempelkan modul **Buzzer** di sasis bagian dalam.
 
 ---

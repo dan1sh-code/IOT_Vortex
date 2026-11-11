@@ -39,7 +39,8 @@ d:\IOT_Vortex\
 │   ├── gamepad_bridge.py          --> Program Python Pygame dengan Terminal HUD
 │   └── requirements.txt           --> Dependensi (pygame, requests, colorama)
 └── firmware/
-    └── vortex_x_esp32_gamepad.ino --> Firmware ESP32 Lengkap (REST API + 8 Servo + PIR)
+    ├── vortex_x_transmitter/      --> Firmware ESP32 #1 (Web Gateway + Audio I2S + Sensor + OLED)
+    └── vortex_x_receiver/         --> Firmware ESP32 #2 (4 Servo Kaki Bawah + LCD Data)
 ```
 
 ---
@@ -58,13 +59,13 @@ Solusi ini adalah aplikasi berbasis web dengan desain **Cyberpunk / Sci-Fi Tacti
    - Jika Anda tidak sedang membawa gamepad fisik, Anda bisa menggunakan stik analog virtual di layar dengan mouse atau jari (layar sentuh).
 4. **Visualisasi Postur Robot 8-Servo & Animasi Gait:**
    - Diagram top-down robot VORTEX-X dengan kaki bersendi yang bergerak secara realistis (*trot gait kinematics*) sesuai perintah maju, mundur, atau belok, lengkap dengan derajat sudut servo (FL, FR, RL, RR).
-5. **Radar Ultrasonik Sonar & Deteksi Intrusi PIR:**
-   - Radar sapuan melingkar dengan indikator jarak halangan.
-   - Indikator peringatan sensor PIR yang akan berkedip merah dan memancarkan gelombang radar saat mendeteksi manusia.
+5. **Dual Display Mirror (OLED + LCD) & Deteksi Intrusi PIR:**
+   - Cermin virtual real-time untuk animasi ekspresi mata OLED 0.96" dan teks 2 baris LCD 16×2 robot.
+   - Indikator peringatan sensor PIR yang akan berkedip merah dan memicu mata waspada (`ALERT`) saat mendeteksi manusia.
 6. **Efek Suara Sintetis (Web Audio API):**
-   - Suara klik antarmuka futuristik, dengung servo, ping sonar, dan sirine bahaya saat ada halangan atau manusia terdeteksi (tanpa memerlukan file audio eksternal).
+   - Suara klik antarmuka futuristik, dengung servo, dan sirine bahaya saat ada manusia terdeteksi oleh sensor PIR.
 7. **Getaran Haptic (Rumble Feedback):**
-   - Gamepad fisik Anda akan bergetar saat robot mendeteksi halangan terlalu dekat (< 10 cm) atau saat sensor PIR memicu peringatan!
+   - Gamepad fisik Anda akan bergetar saat Anda menekan tombol perintah atau saat sensor PIR memicu peringatan!
 8. **Export Log CSV:**
    - Tombol satu klik untuk mengunduh log telemetri dan anomali ke format CSV untuk analisis model machine learning AI.
 
@@ -128,25 +129,23 @@ Bagi Anda yang lebih menyukai kendali langsung melalui skrip Python pada termina
 
 ## 6. Fitur Keselamatan Otonom (*Safety Interlock*)
 
-1. **Anti Tabrakan Ultrasonik:**
-   - Jika jarak objek yang dibaca HC-SR04 berada di bawah **10 cm**, perintah `FORWARD` akan **otomatis ditolak** oleh firmware ESP32 maupun dashboard.
-   - Dashboard akan menampilkan status merah berkedip, memicu getaran haptic pada stik, dan membunyikan alarm.
+1. **Zero-Snap Startup & Mode RELAX (Anti-Getar):**
+   - Saat ESP32 Receiver baru menyala, seluruh 4 servo langsung dalam kondisi `RELAX` (PWM dilepas) sehingga tidak menyentak ke 90° dan tidak bergetar.
 2. **Koneksi Timeout (Dead Man's Switch):**
-   - Jika sinyal Wi-Fi terputus atau tidak ada perintah baru selama lebih dari **2,5 detik**, ESP32 akan otomatis menghentikan servo ke posisi `STOP/STAND` untuk mencegah robot berjalan tak terkendali.
-3. **Peringatan Deteksi Manusia PIR:**
-   - Begitu sensor PIR mendeteksi perubahan radiasi termal dari manusia (sinyal HIGH), buzzer ESP32 berbunyi pendek, panel dashboard menampilkan peringatan intrusi, dan status dicatat ke dalam log CSV untuk model AI lokal.
+   - Jika sinyal ESP-NOW dari Transmitter terputus lebih dari **5 detik** saat robot aktif, Receiver otomatis menghentikan gerak dan masuk mode `RELAX`.
+3. **Peringatan Deteksi Manusia PIR & Audio I2S:**
+   - Begitu sensor PIR mendeteksi gerakan, Transmitter memicu rekaman mic INMP441 $\rightarrow$ Speaker MAX98357A, mengubah ekspresi OLED ke `ALERT`, dan memancarkan status ke LCD Receiver serta Dashboard Web.
 
 ---
 
 ## 7. Langkah Flashing Firmware ESP32
 
 1. Buka aplikasi **Arduino IDE**.
-2. Pasang board ESP32 melalui *Boards Manager* (Espressif Systems).
+2. Pasang board `esp32` oleh Espressif Systems melalui *Boards Manager*.
 3. Pasang pustaka pendukung dari *Library Manager*:
-   - `ESP32Servo` oleh Kevin Harrington.
-   - `DHT sensor library` oleh Adafruit.
-4. Buka file `firmware/vortex_x_esp32_gamepad.ino`.
-5. Sambungkan ESP32 DevKit V1 ke port USB laptop Anda.
-6. Pilih board `ESP32 Dev Module` dan port COM yang sesuai.
-7. Klik tombol **Upload** (panah kanan).
-8. Buka **Serial Monitor** pada baudrate `115200` untuk memverifikasi inisialisasi pin dan alamat IP!
+   - `ESP32Servo` oleh Kevin Harrington (untuk Receiver).
+   - `DHT sensor library` + `Adafruit SSD1306` + `Adafruit GFX Library` (untuk Transmitter).
+   - `LiquidCrystal I2C` oleh Frank de Brabander.
+4. Upload [`vortex_x_transmitter.ino`](file:///d:/IOT_Vortex/firmware/vortex_x_transmitter/vortex_x_transmitter.ino) ke ESP32 #1 (Transmitter).
+5. Upload [`vortex_x_receiver.ino`](file:///d:/IOT_Vortex/firmware/vortex_x_receiver/vortex_x_receiver.ino) ke ESP32 #2 (Receiver).
+6. Buka **Serial Monitor** pada baudrate `115200` untuk melihat IP Transmitter & status Auto-Pairing ESP-NOW Receiver!

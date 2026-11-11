@@ -12,38 +12,42 @@
   // --- STATE SYSTEM ---
   const state = {
     connected: false,
-    simMode: true,
+    simMode: false,
     audioEnabled: true,
-    espIp: '192.168.4.1',
+    espIp: '10.63.8.44',
     lastPing: 4,
-    currentCommand: 'STAND',
+    currentCommand: 'RELAX',
     currentSpeed: 2, // 1: ECO, 2: NORMAL, 3: SPORT
     activeGamepads: {},
     selectedGamepadIndex: null,
     n8nWebhookUrl: 'http://localhost:5678/webhook/vortex-telemetry',
     n8nEnabled: true,
     lastN8nAlertTime: 0,
+    servosAttached: false,
     
-    // Telemetry Values
+    // Telemetry Values (Web -> Transmitter -> Receiver)
     telemetry: {
-      distance: 42.5,
       temperature: 28.4,
       humidity: 65.0,
-      pirState: 0, // 0 = Idle, 1 = Motion Detected
+      pirState: 0,
       pirRaw: 0,
+      micLevel: 0,
+      micAlert: 0,
+      oledReady: false,
+      lcdReady: false,
+      rxConnected: false,
+      oledMode: 'AUTO',
+      oledFace: 'SLEEPY',
       aiScore: 0.94,
       aiVerdict: 'NORMAL',
-      gaitState: 'STAND',
+      gaitState: 'RELAX',
       safetyStatus: 'SAFE'
     },
 
-    // 8 Servo Angles (Degrees: 0-180)
-    servos: {
-      flHip: 90, flLift: 90,
-      frHip: 90, frLift: 90,
-      rlHip: 90, rlLift: 90,
-      rrHip: 90, rrLift: 90
-    },
+    // 4 Servo Kaki Bawah di Receiver: [0]RL(G13), [1]FL(G14), [2]RR(G18), [3]FR(G21)
+    servos: { rl: 90, fl: 90, rr: 90, fr: 90 },
+    homes: [90, 90, 90, 90],
+    sliderDragging: -1,
 
     // Gait animation cycle
     gaitStep: 0,
@@ -71,10 +75,26 @@
     statusText: document.getElementById('statusText'),
     pingValue: document.getElementById('pingValue'),
 
-    // Telemetry displays
-    valDistance: document.getElementById('valDistance'),
-    distanceStatus: document.getElementById('distanceStatus'),
-    obstacleBlip: document.getElementById('obstacleBlip'),
+    // Telemetry, Mic, RX Link & Dual Display Mirror
+    micBarFill: document.getElementById('micBarFill'),
+    micPctLabel: document.getElementById('micPctLabel'),
+    rxLinkBarFill: document.getElementById('rxLinkBarFill'),
+    rxLinkLabel: document.getElementById('rxLinkLabel'),
+    btnRecordAudio: document.getElementById('btnRecordAudio'),
+    btnTestSpeaker: document.getElementById('btnTestSpeaker'),
+    oledHwBadge: document.getElementById('oledHwBadge'),
+    oledEyesStage: document.getElementById('oledEyesStage'),
+    oledFaceText: document.getElementById('oledFaceText'),
+    oledActiveModeLabel: document.getElementById('oledActiveModeLabel'),
+    oledAnimGrid: document.getElementById('oledAnimGrid'),
+    aiReplyText: document.getElementById('aiReplyText'),
+    n8nVoiceInput: document.getElementById('n8nVoiceInput'),
+    btnSaveN8nVoice: document.getElementById('btnSaveN8nVoice'),
+    lcdMirrorRow1: document.getElementById('lcdMirrorRow1'),
+    lcdMirrorRow2: document.getElementById('lcdMirrorRow2'),
+    displayBusStatus: document.getElementById('displayBusStatus'),
+    svgOledEyeL: document.getElementById('svgOledEyeL'),
+    svgOledEyeR: document.getElementById('svgOledEyeR'),
     valTemp: document.getElementById('valTemp'),
     valHumidity: document.getElementById('valHumidity'),
     thermalGauge: document.getElementById('thermalGauge'),
@@ -88,15 +108,11 @@
     aiVerdictLabel: document.getElementById('aiVerdictLabel'),
     currentGaitBadge: document.getElementById('currentGaitBadge'),
 
-    // Servo displays
-    angFL1: document.getElementById('angFL1'),
-    angFL2: document.getElementById('angFL2'),
-    angFR1: document.getElementById('angFR1'),
-    angFR2: document.getElementById('angFR2'),
-    angRL1: document.getElementById('angRL1'),
-    angRL2: document.getElementById('angRL2'),
-    angRR1: document.getElementById('angRR1'),
-    angRR2: document.getElementById('angRR2'),
+    // 4 Servo displays (Receiver)
+    angRL: document.getElementById('angRL'),
+    angFL: document.getElementById('angFL'),
+    angRR: document.getElementById('angRR'),
+    angFR: document.getElementById('angFR'),
 
     // Robot SVG Bones
     boneFL_hip: document.getElementById('boneFL_hip'),
@@ -147,12 +163,16 @@
     speedRange: document.getElementById('speedRange'),
     speedValText: document.getElementById('speedValText'),
 
-    // Action buttons
+    // Action & Calibration buttons
     btnStanceStand: document.getElementById('btnStanceStand'),
     btnStanceCrouch: document.getElementById('btnStanceCrouch'),
     btnStanceWave: document.getElementById('btnStanceWave'),
     btnStancePatrol: document.getElementById('btnStancePatrol'),
     btnEStop: document.getElementById('btnEStop'),
+    btnServoRelax: document.getElementById('btnServoRelax'),
+    btnSaveHome: document.getElementById('btnSaveHome'),
+    btnResetHome: document.getElementById('btnResetHome'),
+    servoSliders: [0, 1, 2, 3].map(i => document.getElementById(`sliderServo${i}`)),
 
     // Console
     consoleBody: document.getElementById('consoleBody'),
@@ -242,7 +262,7 @@
     state.history.push({
       timestamp: new Date().toISOString(),
       command: state.currentCommand,
-      distance_cm: state.telemetry.distance,
+      oled_face: state.telemetry.oledFace,
       temperature_c: state.telemetry.temperature,
       humidity_pct: state.telemetry.humidity,
       pir_state: state.telemetry.pirState,
@@ -506,23 +526,31 @@
   }
 
   // ===================================================================
-  // 5. GAIT KINEMATICS & 8-SERVO POSTURE SIMULATOR
+  // 5. GAIT KINEMATICS & 4-SERVO LOWER WAVING SIMULATOR
   // ===================================================================
   function updateServoDisplay() {
-    el.angFL1.textContent = `${state.servos.flHip}°`;
-    el.angFL2.textContent = `${state.servos.flLift}°`;
-    el.angFR1.textContent = `${state.servos.frHip}°`;
-    el.angFR2.textContent = `${state.servos.frLift}°`;
-    el.angRL1.textContent = `${state.servos.rlHip}°`;
-    el.angRL2.textContent = `${state.servos.rlLift}°`;
-    el.angRR1.textContent = `${state.servos.rrHip}°`;
-    el.angRR2.textContent = `${state.servos.rrLift}°`;
+    // Urutan: [0]RL(G13), [1]FL(G14), [2]RR(G18), [3]FR(G21)
+    const vals = [state.servos.rl, state.servos.fl, state.servos.rr, state.servos.fr];
 
-    // Visual kinematic bending of SVG legs
-    const dFL = (state.servos.flHip - 90) * 0.4;
-    const dFR = (state.servos.frHip - 90) * 0.4;
-    const dRL = (state.servos.rlHip - 90) * 0.4;
-    const dRR = (state.servos.rrHip - 90) * 0.4;
+    if (el.angRL) el.angRL.textContent = `${vals[0]}°`;
+    if (el.angFL) el.angFL.textContent = `${vals[1]}°`;
+    if (el.angRR) el.angRR.textContent = `${vals[2]}°`;
+    if (el.angFR) el.angFR.textContent = `${vals[3]}°`;
+
+    // Sync 4 sliders unless user is actively dragging that slider
+    if (el.servoSliders) {
+      vals.forEach((v, idx) => {
+        if (el.servoSliders[idx] && state.sliderDragging !== idx) {
+          el.servoSliders[idx].value = v;
+        }
+      });
+    }
+
+    // Visual kinematic waving of SVG lower joints
+    const dRL = (state.servos.rl - state.homes[0]) * 0.45;
+    const dFL = (state.servos.fl - state.homes[1]) * 0.45;
+    const dRR = (state.servos.rr - state.homes[2]) * 0.45;
+    const dFR = (state.servos.fr - state.homes[3]) * 0.45;
 
     el.boneFL_lift.setAttribute('x2', 60 + dFL);
     el.footFL.setAttribute('cx', 60 + dFL);
@@ -541,79 +569,49 @@
     if (state.gaitInterval) clearInterval(state.gaitInterval);
 
     state.gaitStep = 0;
-    const baseInterval = state.currentSpeed === 3 ? 120 : (state.currentSpeed === 2 ? 180 : 250);
+    const baseInterval = state.currentSpeed === 3 ? 160 : (state.currentSpeed === 2 ? 240 : 340);
 
     state.gaitInterval = setInterval(() => {
       state.gaitStep = (state.gaitStep + 1) % 4;
+      const h = state.homes;
 
-      if (type === 'FORWARD') {
-        // Trot Gait: Diagonal pairs alternate lift & swing
-        if (state.gaitStep === 0) {
-          // Pair 1 (FL + RR) Lift and Swing Forward
-          state.servos.flLift = 70;
-          state.servos.flHip = 105;
-          state.servos.rrLift = 70;
-          state.servos.rrHip = 105;
-          // Pair 2 (FR + RL) Support and Push Back
-          state.servos.frLift = 90;
-          state.servos.frHip = 75;
-          state.servos.rlLift = 90;
-          state.servos.rlHip = 75;
-        } else if (state.gaitStep === 1) {
-          state.servos.flLift = 90;
-          state.servos.rrLift = 90;
-        } else if (state.gaitStep === 2) {
-          // Pair 2 (FR + RL) Lift and Swing Forward
-          state.servos.frLift = 70;
-          state.servos.frHip = 105;
-          state.servos.rlLift = 70;
-          state.servos.rlHip = 105;
-          // Pair 1 (FL + RR) Support and Push Back
-          state.servos.flLift = 90;
-          state.servos.flHip = 75;
-          state.servos.rrLift = 90;
-          state.servos.rrHip = 75;
-        } else if (state.gaitStep === 3) {
-          state.servos.frLift = 90;
-          state.servos.rlLift = 90;
+      if (type === 'WAVE') {
+        state.servos.rl = h[0];
+        state.servos.rr = h[2];
+        if (state.gaitStep % 2 === 0) {
+          state.servos.fr = Math.max(15, h[3] - 30);
+          state.servos.fl = Math.min(165, h[1] + 25);
+        } else {
+          state.servos.fr = Math.min(165, h[3] + 25);
+          state.servos.fl = Math.max(15, h[1] - 30);
         }
+        sfx.step();
+      } else if (type === 'FORWARD') {
+        state.servos.rl = h[0]; state.servos.fl = h[1];
+        state.servos.rr = h[2]; state.servos.fr = h[3];
+        const seq = ['fl', 'fr', 'rr', 'rl'];
+        const activeKey = seq[state.gaitStep % 4];
+        state.servos[activeKey] = Math.max(15, h[['rl','fl','rr','fr'].indexOf(activeKey)] - 32);
         sfx.step();
       } else if (type === 'BACKWARD') {
-        // Inverse trot gait
-        if (state.gaitStep === 0) {
-          state.servos.flLift = 70;
-          state.servos.flHip = 75;
-          state.servos.rrLift = 70;
-          state.servos.rrHip = 75;
-          state.servos.frLift = 90;
-          state.servos.frHip = 105;
-          state.servos.rlLift = 90;
-          state.servos.rlHip = 105;
-        } else if (state.gaitStep === 2) {
-          state.servos.frLift = 70;
-          state.servos.frHip = 75;
-          state.servos.rlLift = 70;
-          state.servos.rlHip = 75;
-          state.servos.flLift = 90;
-          state.servos.flHip = 105;
-          state.servos.rrLift = 90;
-          state.servos.rrHip = 105;
-        }
+        state.servos.rl = h[0]; state.servos.fl = h[1];
+        state.servos.rr = h[2]; state.servos.fr = h[3];
+        const seq = ['rl', 'rr', 'fr', 'fl'];
+        const activeKey = seq[state.gaitStep % 4];
+        state.servos[activeKey] = Math.max(15, h[['rl','fl','rr','fr'].indexOf(activeKey)] - 32);
         sfx.step();
       } else if (type === 'LEFT') {
-        state.servos.flHip = 80;
-        state.servos.frHip = 110;
-        state.servos.rlHip = 80;
-        state.servos.rrHip = 110;
+        const amp = state.gaitStep % 2 === 0 ? -30 : 25;
+        state.servos.rl = Math.max(15, Math.min(165, h[0] + amp));
+        state.servos.fl = Math.max(15, Math.min(165, h[1] + amp));
+        state.servos.rr = h[2];
+        state.servos.fr = h[3];
       } else if (type === 'RIGHT') {
-        state.servos.flHip = 110;
-        state.servos.frHip = 80;
-        state.servos.rlHip = 110;
-        state.servos.rrHip = 80;
-      } else if (type === 'WAVE') {
-        // Wave front right paw
-        state.servos.frLift = state.gaitStep % 2 === 0 ? 50 : 30;
-        state.servos.frHip = state.gaitStep % 2 === 0 ? 120 : 80;
+        const amp = state.gaitStep % 2 === 0 ? -30 : 25;
+        state.servos.rl = h[0];
+        state.servos.fl = h[1];
+        state.servos.rr = Math.max(15, Math.min(165, h[2] + amp));
+        state.servos.fr = Math.max(15, Math.min(165, h[3] + amp));
       }
 
       updateServoDisplay();
@@ -631,41 +629,36 @@
   // 6. COMMAND DISPATCHER & SAFETY INTERLOCK
   // ===================================================================
   function sendCommand(cmd) {
-    // Safety Interlock check: Obstacle avoidance threshold
-    if (cmd === 'FORWARD' && state.telemetry.distance <= 10.0) {
-      addLog(`KONTROL DITOLAK: Halangan terdeteksi pada ${state.telemetry.distance} cm!`, 'WARN');
-      sfx.estop();
-      el.distanceStatus.textContent = 'HALANGAN TERLALU DEKAT! MAJU DIBLOKIR';
-      el.distanceStatus.classList.add('warning');
-      triggerHaptic(state.activeGamepads[state.selectedGamepadIndex], 0.8, 0.9, 300);
-      return;
-    }
-
     state.currentCommand = cmd;
     el.currentGaitBadge.textContent = `POSTUR: ${cmd}`;
+    state.telemetry.gaitState = cmd;
+    updateLocalDisplayMirrorState();
+    renderTelemetry();
 
     if (cmd === 'FORWARD' || cmd === 'BACKWARD' || cmd === 'LEFT' || cmd === 'RIGHT' || cmd === 'WAVE') {
       startGaitCycle(cmd);
     } else {
       stopGaitCycle();
       if (cmd === 'STAND') {
-        Object.keys(state.servos).forEach(k => state.servos[k] = 90);
+        state.servos.rl = state.homes[0];
+        state.servos.fl = state.homes[1];
+        state.servos.rr = state.homes[2];
+        state.servos.fr = state.homes[3];
       } else if (cmd === 'CROUCH') {
-        state.servos.flLift = 130;
-        state.servos.frLift = 130;
-        state.servos.rlLift = 130;
-        state.servos.rrLift = 130;
-      } else if (cmd === 'STOP') {
-        // Neutral hold
-        Object.keys(state.servos).forEach(k => state.servos[k] = 90);
+        state.servos.rl = Math.min(165, state.homes[0] + 30);
+        state.servos.fl = Math.min(165, state.homes[1] + 30);
+        state.servos.rr = Math.min(165, state.homes[2] + 30);
+        state.servos.fr = Math.min(165, state.homes[3] + 30);
+      } else if (cmd === 'STOP' || cmd === 'RELAX') {
+        state.currentCommand = 'RELAX';
+        el.currentGaitBadge.textContent = 'POSTUR: RELAX';
         sfx.click();
       }
       updateServoDisplay();
     }
 
-    addLog(`Perintah dikirim: [${cmd}] (Kecepatan: ${state.currentSpeed}x)`, 'CMD');
+    addLog(`Perintah Web -> TX -> RX: [${cmd}] (Kecepatan: ${state.currentSpeed}x)`, 'CMD');
 
-    // If live mode, transmit HTTP GET/POST to ESP32
     if (!state.simMode) {
       transmitToEsp(cmd, state.currentSpeed);
     }
@@ -680,6 +673,25 @@
     sfx.click();
   }
 
+  let telemetryTimer = null;
+  let consecutiveErrors = 0;
+
+  function setConnectionOnline() {
+    state.connected = true;
+    consecutiveErrors = 0;
+    el.statusLed.className = 'indicator-led online';
+    el.statusText.textContent = `ESP32 TERHUBUNG (${state.espIp})`;
+    el.connectBtnText.textContent = 'TERHUBUNG';
+  }
+
+  function setConnectionOffline() {
+    state.connected = false;
+    el.statusLed.className = 'indicator-led offline';
+    el.statusText.textContent = 'ESP32 OFFLINE';
+    el.connectBtnText.textContent = 'HUBUNGKAN';
+    el.pingValue.textContent = '-- ms';
+  }
+
   // Transmit command to physical ESP32 via HTTP REST
   async function transmitToEsp(cmd, speed) {
     const url = `http://${state.espIp}/command?cmd=${cmd}&speed=${speed}`;
@@ -690,30 +702,199 @@
       el.pingValue.textContent = `${ping} ms`;
       if (res.ok) {
         const json = await res.json();
+        setConnectionOnline();
         handleTelemetryUpdate(json);
+      } else {
+        throw new Error(`HTTP ${res.status}`);
       }
     } catch (err) {
       console.warn('ESP32 transmission error:', err);
-      el.statusLed.className = 'indicator-led offline';
-      el.statusText.textContent = 'ESP32 OFFLINE';
+      setConnectionOffline();
+      addLog(`Gagal terhubung ke http://${state.espIp} (${err.message}). Pastikan ESP32 dan laptop berada di jaringan Wi-Fi yang sama!`, 'WARN');
+    }
+  }
+
+  // Transmit servo calibration or relax commands (/servo endpoint)
+  async function sendServoCalRequest(queryString) {
+    if (state.simMode) return;
+    const url = `http://${state.espIp}/servo?${queryString}`;
+    try {
+      const res = await fetch(url, { method: 'GET', mode: 'cors', cache: 'no-store' });
+      if (res.ok) {
+        const json = await res.json();
+        setConnectionOnline();
+        handleTelemetryUpdate(json);
+      }
+    } catch (err) {
+      addLog(`Gagal kirim kalibrasi ke ESP32 (${err.message}).`, 'WARN');
+    }
+  }
+
+  // Periodic Telemetry Polling from real ESP32 (/telemetry endpoint)
+  async function pollEspTelemetry() {
+    if (state.simMode) return;
+    const url = `http://${state.espIp}/telemetry`;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 2000);
+
+    try {
+      const startT = performance.now();
+      const res = await fetch(url, {
+        method: 'GET',
+        mode: 'cors',
+        cache: 'no-store',
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
+      const ping = Math.round(performance.now() - startT);
+      el.pingValue.textContent = `${ping} ms`;
+      if (res.ok) {
+        const json = await res.json();
+        setConnectionOnline();
+        handleTelemetryUpdate(json);
+      } else {
+        throw new Error(`HTTP ${res.status}`);
+      }
+    } catch (err) {
+      clearTimeout(timeoutId);
+      consecutiveErrors++;
+      if (consecutiveErrors >= 3) {
+        setConnectionOffline();
+      }
+    }
+  }
+
+  function startRealTelemetryPolling() {
+    if (telemetryTimer) clearInterval(telemetryTimer);
+    pollEspTelemetry();
+    telemetryTimer = setInterval(pollEspTelemetry, 1000);
+  }
+
+  function stopRealTelemetryPolling() {
+    if (telemetryTimer) {
+      clearInterval(telemetryTimer);
+      telemetryTimer = null;
     }
   }
 
   // ===================================================================
-  // 7. TELEMETRY PROCESSING & SIMULATION ENGINE
+  // 7. TELEMETRY PROCESSING & DUAL DISPLAY MIRROR ENGINE
   // ===================================================================
+  async function sendOledFaceMode(mode) {
+    state.telemetry.oledMode = mode;
+    if (mode !== 'AUTO') {
+      state.telemetry.oledFace = mode;
+    } else {
+      updateLocalDisplayMirrorState();
+    }
+    syncOledFaceButtons();
+    renderTelemetry();
+    addLog(`Animasi Mata OLED dipilih: [${mode}]`, 'SYS');
+
+    if (!state.simMode) {
+      const url = `http://${state.espIp}/face?mode=${encodeURIComponent(mode)}`;
+      try {
+        const res = await fetch(url, { method: 'GET', mode: 'cors', cache: 'no-store' });
+        if (res.ok) {
+          const json = await res.json();
+          setConnectionOnline();
+          handleTelemetryUpdate(json);
+        }
+      } catch (err) {
+        addLog(`Gagal ubah animasi OLED (${err.message}).`, 'WARN');
+      }
+    }
+  }
+
+  function syncOledFaceButtons() {
+    const activeMode = state.telemetry.oledMode || 'AUTO';
+    if (el.oledAnimGrid) {
+      el.oledAnimGrid.querySelectorAll('.oled-face-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.getAttribute('data-face') === activeMode);
+      });
+    }
+    if (el.oledActiveModeLabel) {
+      const desc = activeMode === 'AUTO'
+        ? 'AUTO (Mengikuti Sensor & Gerak)'
+        : `${activeMode} (Pilihan Manual Web)`;
+      el.oledActiveModeLabel.textContent = `MODE AKTIF: ${desc}`;
+    }
+  }
+
+  function updateLocalDisplayMirrorState() {
+    if (state.telemetry.oledMode && state.telemetry.oledMode !== 'AUTO') {
+      state.telemetry.oledFace = state.telemetry.oledMode;
+      return;
+    }
+    if (state.telemetry.pirState === 1 || state.telemetry.micAlert === 1) {
+      state.telemetry.oledFace = 'ANGRY';
+    } else if (state.currentCommand === 'WAVE') {
+      state.telemetry.oledFace = 'HAPPY';
+    } else if (state.currentCommand === 'CROUCH' || state.currentCommand === 'RELAX') {
+      state.telemetry.oledFace = 'LOOK_AROUND';
+    } else if (state.currentCommand === 'LEFT' || state.currentCommand === 'RIGHT') {
+      state.telemetry.oledFace = 'LOOK_AROUND';
+    } else if (state.currentCommand === 'FORWARD' || state.currentCommand === 'BACKWARD') {
+      state.telemetry.oledFace = 'SCANNER';
+    } else {
+      state.telemetry.oledFace = 'NORMAL';
+    }
+  }
+
   function handleTelemetryUpdate(data) {
-    if (data.distance !== undefined) state.telemetry.distance = +data.distance.toFixed(1);
     if (data.temperature !== undefined) state.telemetry.temperature = +data.temperature.toFixed(1);
     if (data.humidity !== undefined) state.telemetry.humidity = +data.humidity.toFixed(1);
+    if (data.micLevel !== undefined) state.telemetry.micLevel = Number(data.micLevel);
+    if (data.micAlert !== undefined) state.telemetry.micAlert = Number(data.micAlert);
+    if (data.oled !== undefined) state.telemetry.oledReady = Boolean(data.oled);
+    if (data.lcd !== undefined) state.telemetry.lcdReady = Boolean(data.lcd);
+    if (data.rxConnected !== undefined) state.telemetry.rxConnected = Boolean(data.rxConnected);
+    if (data.oledMode !== undefined) {
+      state.telemetry.oledMode = String(data.oledMode).toUpperCase();
+      syncOledFaceButtons();
+    }
+    if (data.oledFace !== undefined) state.telemetry.oledFace = String(data.oledFace).toUpperCase();
+    if (data.n8nVoiceUrl && el.n8nVoiceInput && document.activeElement !== el.n8nVoiceInput) {
+      el.n8nVoiceInput.value = data.n8nVoiceUrl;
+    }
+    if (data.lastAiReply && el.aiReplyText) {
+      const nextText = `💬 AI: ${data.lastAiReply}`;
+      if (el.aiReplyText.textContent !== nextText) {
+        el.aiReplyText.textContent = nextText;
+        addLog(`[AI AGENT] ${data.lastAiReply}`, 'SYS');
+      }
+    }
+
+    if (data.attached !== undefined) {
+      state.servosAttached = Boolean(data.attached);
+      if (el.btnServoRelax) {
+        el.btnServoRelax.classList.toggle('active', !state.servosAttached);
+      }
+    }
+
+    if (Array.isArray(data.homes) && data.homes.length === 4) {
+      state.homes = data.homes.map(Number);
+    }
+
+    if (Array.isArray(data.servos) && data.servos.length === 4 && state.sliderDragging === -1) {
+      const keys = ['rl', 'fl', 'rr', 'fr'];
+      keys.forEach((k, idx) => { state.servos[k] = Number(data.servos[idx]); });
+      updateServoDisplay();
+    }
+
     if (data.pir !== undefined) {
       const prev = state.telemetry.pirState;
       state.telemetry.pirState = data.pir ? 1 : 0;
       if (state.telemetry.pirState === 1 && prev === 0) {
         onPirIntruderAlert();
+      } else if (state.telemetry.pirState === 0 && prev === 1) {
+        resetPirVisual();
       }
     }
 
+    if (data.oledFace === undefined) {
+      updateLocalDisplayMirrorState();
+    }
     renderTelemetry();
   }
 
@@ -731,7 +912,7 @@
       device: "VORTEX-X",
       timestamp: new Date().toISOString(),
       event: eventType,
-      distance_cm: state.telemetry.distance,
+      oled_face: state.telemetry.oledFace,
       temperature_c: state.telemetry.temperature,
       humidity_pct: state.telemetry.humidity,
       pir_state: state.telemetry.pirState,
@@ -762,6 +943,9 @@
     el.pirRawBadge.textContent = '1';
     el.svgPirIndicator.setAttribute('fill', '#ff2a55');
     el.svgPirIndicator.setAttribute('r', '11');
+
+    state.telemetry.oledFace = 'ALERT';
+    renderTelemetry();
 
     addLog('SENSOR PIR: Pancaran inframerah terdeteksi! Manusia/objek bergerak di depan robot.', 'PIR');
     sfx.pirAlert();
@@ -803,25 +987,79 @@
     el.aiCircleScore.style.stroke = 'var(--neon-green)';
     el.aiCircleScore.setAttribute('stroke-dasharray', '94, 100');
     el.aiScoreText.textContent = '0.94';
+
+    updateLocalDisplayMirrorState();
+    renderTelemetry();
   }
 
   function renderTelemetry() {
-    // Distance
-    el.valDistance.textContent = state.telemetry.distance.toFixed(1);
-    if (state.telemetry.distance <= 10.0) {
-      el.distanceStatus.textContent = 'HALANGAN DEKAT (< 10 cm)! STOP AKTIF';
-      el.distanceStatus.className = 'metric-status warning';
-      el.obstacleBlip.setAttribute('cx', '100');
-      el.obstacleBlip.setAttribute('cy', '100');
-      triggerN8nWebhook('CRITICAL_OBSTACLE', `Halangan sangat dekat: ${state.telemetry.distance.toFixed(1)} cm!`);
-    } else {
-      el.distanceStatus.textContent = 'JARAK AMAN (> 10 cm)';
-      el.distanceStatus.className = 'metric-status';
-      const arcY = Math.max(20, Math.min(100, 110 - (state.telemetry.distance * 1.5)));
-      el.obstacleBlip.setAttribute('cy', arcY.toFixed(0));
+    // 1. Mirror OLED Eyes Expression & Smooth Animation Class
+    const face = state.telemetry.oledFace || 'NORMAL';
+    if (el.oledEyesStage) {
+      el.oledEyesStage.className = 'oled-eyes-stage';
+      const classMap = {
+        ALERT: 'alert', ANGRY: 'angry', HAPPY: 'happy', LOVE: 'love',
+        SLEEPY: 'sleepy', LOOK_AROUND: 'look-around', SCANNER: 'scanner',
+        MUSIC: 'music', LOOK_LEFT: 'look-left', LOOK_RIGHT: 'look-right',
+        NORMAL: 'normal'
+      };
+      el.oledEyesStage.classList.add(classMap[face] || 'normal');
+    }
+    if (el.oledFaceText) {
+      el.oledFaceText.textContent = `EKSPRESI: ${face}`;
+    }
+    if (el.oledHwBadge) {
+      if (state.simMode) {
+        el.oledHwBadge.textContent = 'SIM MIRROR';
+      } else if (state.connected) {
+        el.oledHwBadge.textContent = state.telemetry.oledReady ? '0x3C OK' : 'NO OLED';
+      } else {
+        el.oledHwBadge.textContent = 'STANDBY';
+      }
     }
 
-    // Climate
+    // Update OLED eyes inside Robot Kinematics SVG Head
+    if (el.svgOledEyeL && el.svgOledEyeR) {
+      const colorMap = {
+        ALERT: '#ff2a55', ANGRY: '#ff2a55', LOVE: '#ff2a70',
+        HAPPY: '#00ff9d', MUSIC: '#a855f7', SCANNER: '#38bdf8'
+      };
+      const eyeColor = colorMap[face] || '#00f3ff';
+      const eyeH = face === 'SLEEPY' ? '4' : '11';
+      el.svgOledEyeL.setAttribute('fill', eyeColor);
+      el.svgOledEyeR.setAttribute('fill', eyeColor);
+      el.svgOledEyeL.setAttribute('height', eyeH);
+      el.svgOledEyeR.setAttribute('height', eyeH);
+    }
+
+    // 2. Mic & TX->RX ESP-NOW Status Bars
+    const micVal = state.telemetry.micLevel || 0;
+    if (el.micBarFill) el.micBarFill.style.height = `${Math.max(8, micVal)}%`;
+    if (el.micPctLabel) el.micPctLabel.textContent = `Mic ${micVal}%`;
+    if (el.rxLinkBarFill) el.rxLinkBarFill.style.height = state.telemetry.rxConnected ? '92%' : '25%';
+    if (el.rxLinkLabel) el.rxLinkLabel.textContent = state.telemetry.rxConnected ? 'RX: OK' : 'RX: Cari';
+
+    // 3. Mirror LCD 16x2 Lines (Receiver Display)
+    if (el.lcdMirrorRow1 && el.lcdMirrorRow2) {
+      const r1 = `T:${state.telemetry.temperature.toFixed(1)}C H:${Math.round(state.telemetry.humidity)}% M:${micVal}`;
+      let r2 = `PIR:0 [${state.currentCommand}]`;
+      if (state.telemetry.pirState === 1) r2 = '!! GERAKAN PIR !';
+      else if (state.telemetry.micAlert === 1) r2 = '!! SUARA KERAS !';
+      el.lcdMirrorRow1.textContent = r1.padEnd(16, ' ').slice(0, 16);
+      el.lcdMirrorRow2.textContent = r2.padEnd(16, ' ').slice(0, 16);
+    }
+
+    if (el.displayBusStatus) {
+      if (state.connected && !state.simMode) {
+        const oStat = state.telemetry.oledReady ? 'OLED:OK' : 'OLED:--';
+        const rStat = state.telemetry.rxConnected ? 'RX:OK' : 'RX:Cari';
+        el.displayBusStatus.textContent = `TX->RX | ${oStat} | ${rStat}`;
+      } else {
+        el.displayBusStatus.textContent = 'WEB -> TX -> RX (ESP-NOW)';
+      }
+    }
+
+    // 4. Climate (DHT11)
     el.valTemp.textContent = state.telemetry.temperature.toFixed(1);
     el.valHumidity.textContent = state.telemetry.humidity.toFixed(1);
     const tempRatio = Math.min(100, Math.max(0, (state.telemetry.temperature - 20) * 5));
@@ -834,19 +1072,19 @@
   function startSimulation() {
     if (simTimer) clearInterval(simTimer);
     simTimer = setInterval(() => {
-      if (!state.simMode) return;
+      if (!state.simMode) {
+        clearInterval(simTimer);
+        simTimer = null;
+        return;
+      }
 
-      // Distance subtle drift
-      let d = state.telemetry.distance + (Math.random() * 4 - 2);
-      if (d < 12) d = 35 + Math.random() * 20;
-      if (d > 80) d = 75;
-      state.telemetry.distance = +d.toFixed(1);
-
-      // Climate subtle drift
+      // Climate & Mic subtle drift
       state.telemetry.temperature = +(28.0 + (Math.random() * 1.5)).toFixed(1);
       state.telemetry.humidity = +(64.0 + (Math.random() * 3)).toFixed(1);
+      state.telemetry.micLevel = Math.floor(8 + Math.random() * 25);
+      state.telemetry.rxConnected = true;
 
-      // Random PIR motion event (1 in 15 chance)
+      // Random PIR motion event (1 in 12 chance)
       if (Math.random() < 0.08 && state.telemetry.pirState === 0) {
         state.telemetry.pirState = 1;
         onPirIntruderAlert();
@@ -856,6 +1094,7 @@
         }, 4000);
       }
 
+      updateLocalDisplayMirrorState();
       renderTelemetry();
     }, 1500);
   }
@@ -866,8 +1105,8 @@
   const activeKeys = new Set();
 
   window.addEventListener('keydown', (e) => {
-    // Avoid interfering with IP input typing
-    if (document.activeElement === el.espIpInput) return;
+    // Avoid interfering with text input typing
+    if (document.activeElement === el.espIpInput || document.activeElement === el.n8nVoiceInput) return;
 
     const key = e.key.toUpperCase();
     if (activeKeys.has(key)) return;
@@ -924,15 +1163,18 @@
     el.btnSimMode.addEventListener('click', () => {
       state.simMode = !state.simMode;
       if (state.simMode) {
+        stopRealTelemetryPolling();
         el.btnSimMode.classList.add('active');
         el.statusLed.className = 'indicator-led online';
         el.statusText.textContent = 'SIMULASI AKTIF';
         addLog('Mode Simulasi Diaktifkan.', 'SYS');
         startSimulation();
       } else {
+        if (simTimer) clearInterval(simTimer);
         el.btnSimMode.classList.remove('active');
         el.statusText.textContent = 'MODE REAL TIME';
         addLog(`Mode Nyata Diaktifkan. Host: ${state.espIp}`, 'SYS');
+        startRealTelemetryPolling();
       }
       sfx.click();
     });
@@ -976,12 +1218,14 @@
       const ip = el.espIpInput.value.trim();
       if (ip) {
         state.espIp = ip;
+        try { localStorage.setItem('vortex_esp_ip', ip); } catch (e) {}
         state.simMode = false;
+        if (simTimer) clearInterval(simTimer);
         el.btnSimMode.classList.remove('active');
         el.statusText.textContent = `MENGHUBUNGKAN: ${ip}...`;
-        addLog(`Menghubungkan ke ESP32 pada http://${ip}...`, 'SYS');
+        addLog(`Menghubungkan ke ESP32 pada http://${ip} (Mode Aman/RELAX)...`, 'SYS');
         sfx.action();
-        transmitToEsp('STAND', state.currentSpeed);
+        startRealTelemetryPolling();
       }
     });
 
@@ -999,9 +1243,136 @@
     el.btnEStop.addEventListener('click', () => {
       sendCommand('STOP');
       sfx.estop();
-      addLog('EMERGENCY STOP DIAKTIFKAN OLEH OPERATOR!', 'WARN');
+      addLog('STOP / RELAX: Seluruh gerakan dihentikan & PWM dilepas (anti-getar).', 'WARN');
       triggerHaptic(state.activeGamepads[state.selectedGamepadIndex], 1.0, 1.0, 500);
     });
+
+    // Calibration & Anti-Jitter Controls
+    if (el.btnServoRelax) {
+      el.btnServoRelax.addEventListener('click', () => {
+        stopGaitCycle();
+        state.currentCommand = 'RELAX';
+        el.currentGaitBadge.textContent = 'POSTUR: RELAX';
+        updateLocalDisplayMirrorState();
+        renderTelemetry();
+        sendServoCalRequest('action=relax');
+        addLog('Mode RELAX diaktifkan: sinyal PWM dilepas (servo 100% diam & bebas getar).', 'SYS');
+        sfx.click();
+      });
+    }
+
+    if (el.btnSaveHome) {
+      el.btnSaveHome.addEventListener('click', () => {
+        const keys = ['rl', 'fl', 'rr', 'fr'];
+        state.homes = keys.map(k => state.servos[k]);
+        sendServoCalRequest('action=save_home');
+        addLog(`Titik awal 4 servo (RL,FL,RR,FR) disimpan ke Flash: [${state.homes.join(', ')}]`, 'SYS');
+        sfx.action();
+      });
+    }
+
+    if (el.btnResetHome) {
+      el.btnResetHome.addEventListener('click', () => {
+        state.homes = [90, 90, 90, 90];
+        sendServoCalRequest('action=reset_home');
+        addLog('Titik awal 4 servo dikembalikan ke default 90 derajat.', 'WARN');
+        sfx.click();
+      });
+    }
+
+    if (el.btnRecordAudio) {
+      el.btnRecordAudio.addEventListener('click', () => {
+        sfx.action();
+        addLog('Perintah REKAM 3 detik Mic INMP441 -> Kirim ke AI Agent n8n -> Putar Balasan di MAX98357A (/command?cmd=RECORD).', 'CMD');
+        if (!state.simMode) {
+          transmitToEsp('RECORD', state.currentSpeed);
+        } else {
+          if (el.aiReplyText) {
+            el.aiReplyText.textContent = '[SIM] Vortex Online! Suhu ruang aman & semua sistem siap.';
+          }
+        }
+      });
+    }
+
+    if (el.btnSaveN8nVoice) {
+      el.btnSaveN8nVoice.addEventListener('click', async () => {
+        if (!el.n8nVoiceInput) return;
+        const url = el.n8nVoiceInput.value.trim();
+        if (!url || !url.startsWith('http')) {
+          addLog('URL Webhook n8n tidak valid. Harus diawali http:// atau https://', 'ERR');
+          return;
+        }
+        sfx.action();
+        addLog('Menyimpan URL Voice AI n8n ke ESP32 TX: ' + url, 'SYS');
+        if (state.simMode) {
+          addLog('Mode Simulasi aktif — URL Voice AI dicatat secara lokal.', 'SYS');
+          return;
+        }
+        try {
+          const endpoint = `http://${state.espIp}/config?n8n=${encodeURIComponent(url)}`;
+          const res = await fetch(endpoint, { method: 'GET', mode: 'cors', cache: 'no-store' });
+          if (res.ok) {
+            addLog('URL Webhook Voice AI tersimpan permanen di memori ESP32 TX.', 'SYS');
+          } else {
+            addLog(`Gagal menyimpan URL Voice AI (HTTP ${res.status}).`, 'ERR');
+          }
+        } catch (err) {
+          addLog('Tidak dapat menghubungi ESP32 TX untuk menyimpan URL Voice AI.', 'ERR');
+        }
+      });
+    }
+
+    if (el.btnTestSpeaker) {
+      el.btnTestSpeaker.addEventListener('click', () => {
+        sfx.action();
+        addLog('Uji Speaker pada ESP32 Transmitter (/command?cmd=BEEP).', 'CMD');
+        if (!state.simMode) {
+          transmitToEsp('BEEP', state.currentSpeed);
+        }
+      });
+    }
+
+    // OLED Eye Animation Studio Selector
+    if (el.oledAnimGrid) {
+      el.oledAnimGrid.querySelectorAll('.oled-face-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const faceMode = btn.getAttribute('data-face');
+          if (faceMode) {
+            sfx.click();
+            sendOledFaceMode(faceMode);
+          }
+        });
+      });
+    }
+
+    // Individual Live Servo Sliders (0:RL13, 1:FL14, 2:RR18, 3:FR21)
+    if (el.servoSliders) {
+      const keys = ['rl', 'fl', 'rr', 'fr'];
+      let lastSliderSend = 0;
+
+      el.servoSliders.forEach((slider, idx) => {
+        if (!slider) return;
+        slider.addEventListener('pointerdown', () => { state.sliderDragging = idx; });
+        slider.addEventListener('pointerup', () => { state.sliderDragging = -1; });
+        slider.addEventListener('change', (e) => {
+          state.sliderDragging = -1;
+          const angle = parseInt(e.target.value, 10);
+          state.servos[keys[idx]] = angle;
+          updateServoDisplay();
+          sendServoCalRequest(`id=${idx}&angle=${angle}`);
+        });
+        slider.addEventListener('input', (e) => {
+          const angle = parseInt(e.target.value, 10);
+          state.servos[keys[idx]] = angle;
+          updateServoDisplay();
+          const now = Date.now();
+          if (now - lastSliderSend > 60) {
+            lastSliderSend = now;
+            sendServoCalRequest(`id=${idx}&angle=${angle}`);
+          }
+        });
+      });
+    }
 
     // D-Pad Touch/Click
     el.btnDpadUp.addEventListener('click', () => sendCommand('FORWARD'));
@@ -1133,7 +1504,7 @@
     const headers = [
       'timestamp',
       'command',
-      'distance_cm',
+      'oled_face',
       'temperature_c',
       'humidity_pct',
       'pir_state',
@@ -1145,7 +1516,7 @@
     const rows = state.history.map(item => [
       item.timestamp,
       item.command,
-      item.distance_cm,
+      item.oled_face,
       item.temperature_c,
       item.humidity_pct,
       item.pir_state,
@@ -1173,9 +1544,26 @@
   // INITIALIZATION ON LOAD
   // ===================================================================
   window.addEventListener('DOMContentLoaded', () => {
+    // Restore saved IP if previously connected
+    try {
+      const savedIp = localStorage.getItem('vortex_esp_ip');
+      if (savedIp && el.espIpInput) {
+        state.espIp = savedIp;
+        el.espIpInput.value = savedIp;
+      }
+    } catch (e) {}
+
     initListeners();
     updateServoDisplay();
-    startSimulation();
+    
+    if (state.simMode) {
+      startSimulation();
+    } else {
+      // Auto connect ke ESP32 live!
+      addLog(`Menghubungkan otomatis ke ESP32 (${state.espIp})...`, 'SYS');
+      startRealTelemetryPolling();
+    }
+
     requestAnimationFrame(pollGamepads);
     addLog('Gamepad API Listener Aktif. Gunakan stik USB/Bluetooth atau Virtual Joystick.', 'SYS');
   });

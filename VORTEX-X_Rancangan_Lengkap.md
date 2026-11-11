@@ -38,12 +38,13 @@
 
 VORTEX-X adalah rancangan robot berkaki empat (*quadruped robot*) yang dikendalikan menggunakan ESP32. Robot direncanakan memiliki delapan servo, yaitu dua servo pada setiap kaki, untuk menghasilkan gerakan dasar seperti berdiri, maju, mundur, dan berbelok.
 
-Robot dilengkapi tiga sensor:
-- **HC-SR04** untuk memperkirakan jarak objek di depan robot.
+Robot dilengkapi dua sensor dan dua modul layar tampilan I2C:
+- **OLED 0.96" I2C (SSD1306)** sebagai wajah/mata ekspresif robot dan penampil status Wi-Fi/IP.
+- **LCD 16×2 I2C (PCF8574)** sebagai panel informasi lokal suhu, kelembapan, status PIR, dan mode gerak.
 - **DHT11** untuk membaca suhu dan kelembapan lingkungan.
 - **PIR (Passive Infrared)** untuk mendeteksi pergerakan manusia atau makhluk hidup di sekitar robot (misalnya HC-SR501 atau Mini PIR AM312).
 
-ESP32 bertanggung jawab atas pembacaan sensor, kendali servo, koneksi Wi-Fi, dan aturan keselamatan lokal. Pengguna dapat memberi perintah melalui dashboard browser, gamepad/joystick interaktif, atau aplikasi Blynk. Laptop menjalankan program Python yang menyimpan data dan melakukan analisis anomali sederhana secara lokal.
+ESP32 bertanggung jawab atas pembacaan sensor, pembaruan layar OLED & LCD secara non-blocking, kendali servo, koneksi Wi-Fi, dan aturan keselamatan lokal. Pengguna dapat memberi perintah melalui dashboard browser, gamepad/joystick interaktif, atau aplikasi Blynk. Laptop menjalankan program Python yang menyimpan data dan melakukan analisis anomali sederhana secara lokal.
 
 **Catatan penting:** AI dalam versi awal bukan AI generatif. Sistem memakai pendekatan *anomaly detection* untuk menandai pola data sensor yang berbeda dari kondisi normal yang telah direkam. Hasil anomali bukan bukti pasti adanya bahaya atau penyusupan nyata.
 
@@ -84,14 +85,15 @@ Agar realistis untuk proyek mahasiswa:
 
 ### 2.2 Ruang lingkup
 
-| Bagian | Cakupan versi pertama |
+| Bagian | Cakupan edisi Dual Display (OLED + LCD) |
 |---|---|
 | Penggerak | 8 servo mikro, 2 servo per kaki |
 | Mikrokontroler | ESP32 DevKit V1 |
-| Sensor jarak | HC-SR04 |
+| Layar Wajah Robot | OLED 0.96" I2C (SSD1306 128x64) |
+| Layar Telemetri Bodi | LCD 16x2 I2C (PCF8574) |
 | Sensor lingkungan | DHT11 |
 | Sensor gerak/manusia | PIR (HC-SR501 / AM312) |
-| Kendali | Browser dan Blynk |
+| Kendali | Browser Gamepad HUD dan Python Gamepad Bridge |
 | AI | Python lokal, anomaly detection |
 | Penyimpanan | CSV di laptop |
 | Otomatisasi | n8n opsional |
@@ -102,7 +104,7 @@ Agar realistis untuk proyek mahasiswa:
 
 - Robot tidak otomatis menjadi robot penyelamat sungguhan.
 - Sensor PIR hanya mendeteksi perubahan pancaran radiasi inframerah akibat pergerakan tubuh hangat (manusia/hewan), bukan mengukur jarak atau mengidentifikasi wajah.
-- AI tidak dapat mengetahui bahaya dengan pasti hanya dari tiga sensor ini.
+- Tanpa sensor ultrasonik HC-SR04, robot tidak melakukan pengereman halangan otomatis secara fisik — keselamatan jarak bergantung pada kontrol operator dan timeout koneksi otomatis (`TIMEOUT_SAFETY_MS`).
 - Harga total dapat berubah menurut toko, ongkir, kualitas barang, dan alat yang sudah dimiliki.
 
 ---
@@ -119,19 +121,18 @@ Kepanjangan tersebut merupakan pilihan branding proyek, bukan nama standar tekni
 
 ### 3.2 Alur kerja
 
-1. Pengguna membuka dashboard browser atau aplikasi Blynk.
-2. Pengguna menekan tombol gerak.
+1. Pengguna membuka dashboard browser atau menjalankan gamepad bridge.
+2. Pengguna menekan tombol gerak atau kontrol postur.
 3. Perintah dikirim melalui Wi-Fi ke ESP32.
-4. ESP32 memeriksa kondisi keselamatan, misalnya apakah ada halangan terlalu dekat.
-5. Jika perintah diizinkan, ESP32 menggerakkan servo sesuai pola gerak yang telah dikalibrasi.
-6. ESP32 membaca sensor secara berkala.
-7. Data sensor dan status robot dikirim ke laptop.
-8. Python menyimpan data dan menganalisis apakah pola sensor berbeda dari data normal.
-9. Jika diperlukan, program mengirim webhook ke n8n untuk notifikasi atau pencatatan.
+4. ESP32 menggerakkan 8 servo sesuai pola gait dan memperbarui ekspresi mata pada OLED (`NORMAL`, `HAPPY`, `ALERT`, `LOOK_LEFT`, dll.).
+5. ESP32 membaca DHT11 & PIR secara berkala dan menampilkan data langsung di LCD 16×2 I2C.
+6. Data sensor dan status display dikirim ke dashboard browser via REST API JSON.
+7. Python/Dashboard menyimpan riwayat data dan menganalisis anomali.
+8. Jika PIR mendeteksi gerakan atau terjadi anomali, program mengirim webhook ke n8n untuk notifikasi Telegram.
 
 ### 3.3 Prinsip keselamatan
 
-**Kendali gerak dan berhenti darurat harus tetap dijalankan oleh ESP32.** Laptop, AI, Blynk, dan n8n merupakan sistem pendukung. Jika koneksi laptop atau internet terputus, ESP32 tetap harus mampu menghentikan gerakan berdasarkan aturan lokal.
+**Kendali gerak dan berhenti darurat harus tetap dijalankan oleh ESP32.** Jika koneksi dashboard/Wi-Fi terputus lebih dari 2,5 detik (`TIMEOUT_SAFETY_MS`), ESP32 secara otomatis menghentikan gerakan servo (*auto-stop*) ke posisi netral aman.
 
 ---
 
@@ -145,26 +146,26 @@ Dashboard menyediakan tombol:
 - Belok kanan
 - Berdiri
 - Berhenti
+- Merunduk (`CROUCH`) & Salam (`WAVE`)
 
-Perintah dari browser dan Blynk harus masuk ke satu pengelola perintah di firmware. Jangan membuat dua mekanisme yang menggerakkan servo secara terpisah.
+### 4.2 Dual Display I2C (OLED + LCD)
+- **OLED 0.96" SSD1306 (Kepala Robot):** Menampilkan animasi mata digital interaktif (berkedip, melirik saat belok, senang saat melambai, waspada merah/berkedip saat PIR mendeteksi orang) beserta alamat IP robot.
+- **LCD 16×2 I2C (Badan Robot):** Menampilkan suhu DHT11, kelembapan RH, status PIR, dan mode gait/IP secara real-time tanpa perlu membuka laptop.
 
-### 4.2 Kendali Blynk
-Blynk digunakan untuk memantau sensor dan mengirim perintah melalui internet. Akses jarak jauh bergantung pada koneksi internet, konfigurasi Blynk, dan keamanan akun.
-
-### 4.3 Penghentian saat ada halangan
-Jika jarak HC-SR04 berada di bawah ambang awal, misalnya 10 cm, robot menolak perintah maju dan menghentikan gerakan maju. Ambang 10 cm hanya nilai awal untuk diuji; sesuaikan berdasarkan kecepatan, bentuk kaki, dan hasil pengujian.
+### 4.3 Timeout Pengaman Koneksi Lokal
+Jika komunikasi remote terputus saat robot sedang berjalan, firmware ESP32 menghentikan seluruh gait setelah 2,5 detik demi keamanan mekanik servo.
 
 ### 4.4 Monitoring suhu dan kelembapan
-DHT11 mengirim pembacaan suhu dan kelembapan ke dashboard dan log CSV. DHT11 cocok untuk demonstrasi dasar, bukan pengukuran presisi tinggi.
+DHT11 mengirim pembacaan suhu dan kelembapan ke LCD 16×2, dashboard web, dan log CSV.
 
 ### 4.5 Monitoring respons Sensor PIR (Deteksi Gerak)
-Sensor PIR mendeteksi pancaran gelombang inframerah termal dari manusia atau makhluk hidup yang bergerak di area pantau robot. Sinyal output berupa logika digital HIGH (1 = ada gerakan terdeteksi) dan LOW (0 = kondisi tenang). Modul seperti HC-SR501 memiliki pengaturan sensitivitas jarak dan *delay time*, sedangkan modul mini AM312 berukuran sangat ringkas dan hemat energi, sangat cocok dipasang di bagian moncong VORTEX-X untuk misi patroli, pemantauan ruangan, atau pencarian korban.
+Sensor PIR mendeteksi pancaran gelombang inframerah termal dari manusia atau makhluk hidup yang bergerak di area pantau robot. Sinyal output berupa logika digital HIGH (1 = ada gerakan terdeteksi) dan LOW (0 = kondisi tenang). Saat aktif, buzzer berbunyi, OLED menampilkan mata waspada (`ALERT`), dan LCD menampilkan peringatan `!! GERAKAN PIR !`.
 
 ### 4.6 Analisis anomali AI lokal
-Python dapat menggunakan Isolation Forest untuk menandai kombinasi data yang tidak biasa (misalnya kombinasi lonjakan suhu mendadak bersamaan dengan adanya deteksi gerakan saat robot berpatroli). Model dilatih menggunakan data baseline normal. Anomali perlu diperiksa manusia dan tidak otomatis berarti ada ancaman bahaya fatal.
+Dashboard dan Python memantau skor kesehatan telemetri serta anomali deteksi intrusi PIR.
 
 ### 4.7 Riwayat misi
-Laptop menyimpan waktu, perintah gerak, jarak, suhu, kelembapan, status deteksi PIR (0 = aman, 1 = gerakan terdeteksi), status keselamatan, dan skor/label anomali jika tersedia.
+Dashboard menyimpan waktu, perintah gerak, ekspresi OLED aktif, suhu, kelembapan, status deteksi PIR (0 = aman, 1 = gerakan terdeteksi), status keselamatan, dan skor/label anomali.
 
 ---
 
@@ -173,18 +174,14 @@ Laptop menyimpan waktu, perintah gerak, jarak, suhu, kelembapan, status deteksi 
 ```mermaid
 flowchart TD
     U[Pengguna: HP / Laptop] --> B[Dashboard Browser]
-    U --> C[Aplikasi Blynk]
     B -->|Wi-Fi / HTTP lokal| E[ESP32]
-    C -->|Internet / Blynk| E
-    S1[HC-SR04] --> E
     S2[DHT11] --> E
     S3[PIR Motion Sensor] --> E
-    E -->|Sinyal kendali| M[8 Servo]
-    E -->|Telemetri melalui Wi-Fi| P[Program Python di Laptop]
-    P --> D[Log CSV]
-    P --> A[Model Anomaly Detection]
-    A -->|Peringatan / webhook opsional| N[n8n]
-    N --> T[Notifikasi / pencatatan]
+    E -->|Bus I2C SDA G21 / SCL G22| D1[OLED 0.96 SSD1306]
+    E -->|Bus I2C SDA G21 / SCL G22| D2[LCD 16x2 PCF8574]
+    E -->|Sinyal PWM| M[8 Servo]
+    B -->|Webhook Opsional| N[n8n]
+    N --> T[Notifikasi Telegram]
 ```
 
 ### 5.1 Fungsi setiap bagian
@@ -219,17 +216,18 @@ Perkiraan di bawah merupakan **anggaran perencanaan**, bukan harga final yang di
 |---:|---|---:|---:|
 | 1 | ESP32 DevKit V1 | 1 | Rp50.000 |
 | 2 | Servo SG90 | 8 | Rp158.000 |
-| 3 | HC-SR04 | 1 | Rp12.000 |
-| 4 | DHT11 | 1 | Rp15.000 |
-| 5 | Modul Sensor PIR (HC-SR501 / AM312) | 1 | Rp14.000 |
-| 6 | Buzzer | 1 | Rp3.000 |
-| 7 | Catu daya servo 5 V dengan kapasitas arus memadai | 1 | Rp46.000 |
-| 8 | Kabel jumper, konektor, dan kabel daya | Secukupnya | Rp15.000 |
-| 9 | Bahan rangka ringan | Secukupnya | Rp25.000 |
-| 10 | Baut, mur, lem, pengikat | Secukupnya | Rp15.000 |
-| 11 | Sakelar dan konektor dasar | Secukupnya | Rp5.000 |
-| 12 | Ongkir/cadangan | — | Rp30.000 |
-|  | **Subtotal elektronik dan mekanik** |  | **Rp388.000** |
+| 3 | OLED 0.96" I2C (SSD1306) | 1 | Rp28.000 |
+| 4 | LCD 16×2 I2C (PCF8574) | 1 | Rp24.000 |
+| 5 | DHT11 | 1 | Rp15.000 |
+| 6 | Modul Sensor PIR (HC-SR501 / AM312) | 1 | Rp14.000 |
+| 7 | Buzzer | 1 | Rp3.000 |
+| 8 | Catu daya servo 5 V dengan kapasitas arus memadai | 1 | Rp46.000 |
+| 9 | Kabel jumper, konektor, dan kabel daya | Secukupnya | Rp15.000 |
+| 10 | Bahan rangka ringan | Secukupnya | Rp25.000 |
+| 11 | Baut, mur, lem, pengikat | Secukupnya | Rp15.000 |
+| 12 | Sakelar dan konektor dasar | Secukupnya | Rp5.000 |
+| 13 | Ongkir/cadangan | — | Rp30.000 |
+|  | **Subtotal elektronik dan mekanik** |  | **Rp428.000** |
 
 Perkiraan alat kerja jika belum dimiliki:
 
@@ -239,13 +237,13 @@ Perkiraan alat kerja jika belum dimiliki:
 | Multimeter dasar | Rp36.000 |
 | Obeng/cutter/tang dasar | Rp25.000 |
 | **Subtotal alat** | **Rp199.000** |
-| **Total perkiraan jika membeli semuanya** | **Rp591.000** |
+| **Total perkiraan jika membeli semuanya** | **Rp627.000** |
 
 Harga bisa berbeda cukup besar. Servo SG90 sangat bervariasi kualitasnya. Pastikan catu daya mampu menangani arus lonjakan beberapa servo secara bersamaan; angka 5 V/5 A adalah titik awal untuk ditinjau, bukan jaminan selalu cukup.
 
 ### 6.2 Apakah bisa di bawah Rp300.000?
 
-Jika harus membeli delapan servo, ESP32, tiga sensor, sumber daya, rangka, kabel, dan semua alat kerja dari nol, **Rp300.000 tidak realistis untuk rancangan penuh**.
+Jika harus membeli delapan servo, ESP32, dual display OLED+LCD, sensor, sumber daya, rangka, kabel, dan semua alat kerja dari nol, **Rp300.000 tidak realistis untuk rancangan penuh**.
 
 Pilihan menekan biaya:
 1. Pinjam solder, multimeter, dan alat mekanik dari laboratorium.
@@ -261,7 +259,7 @@ Jangan mengurangi biaya dengan memasok semua servo langsung dari pin 5 V ESP32 a
 Urutan yang disarankan:
 1. ESP32 dan satu servo untuk tes.
 2. Catu daya yang sesuai dan multimeter.
-3. Sensor HC-SR04.
+3. OLED 0.96" I2C & LCD 16×2 I2C (untuk tampilan status langsung pada robot).
 4. Sisa servo dan bahan rangka.
 5. DHT11 dan Sensor PIR.
 6. Bahan pendukung dan konektor.
@@ -337,25 +335,23 @@ Diagram ini bersifat konseptual, bukan gambar ukuran produksi. Ukuran badan, jar
 
 ## 8. Rancangan Elektronik dan Pin ESP32
 
-### 8.1 Pemetaan pin awal
-
-Pemetaan berikut adalah rancangan awal yang harus diperiksa pada papan ESP32 yang benar-benar digunakan.
+### 8.1 Pemetaan pin terbaru (Dual Display OLED + LCD, Tanpa Ultrasonik)
 
 | Fungsi | Pin ESP32 |
 |---|---|
-| Servo FL hip | GPIO13 |
-| Servo FL lift | GPIO14 |
-| Servo FR hip | GPIO16 |
-| Servo FR lift | GPIO17 |
-| Servo RL hip | GPIO18 |
-| Servo RL lift | GPIO19 |
-| Servo RR hip | GPIO21 |
-| Servo RR lift | GPIO22 |
-| HC-SR04 TRIG | GPIO23 |
-| HC-SR04 ECHO | GPIO32 melalui pembagi tegangan |
-| DHT11 DATA | GPIO4 |
-| PIR digital OUT | GPIO27 (atau GPIO34, level logika digital 3,3 V) |
-| Buzzer | GPIO25 melalui driver bila arusnya melebihi kemampuan pin |
+| Servo FL hip | GPIO13 (D13) |
+| Servo FL lift | GPIO14 (D14) |
+| Servo FR hip | GPIO16 (RX2) |
+| Servo FR lift | GPIO17 (TX2) |
+| Servo RL hip | GPIO18 (D18) |
+| Servo RL lift | GPIO19 (D19) |
+| Servo RR hip | **GPIO4 (D4)** *(dipindah dari D21 agar I2C bebas)* |
+| Servo RR lift | **GPIO26 (D26)** *(dipindah dari D22 agar I2C bebas)* |
+| **Bus I2C SDA (OLED + LCD)** | **GPIO21 (D21)** *(paralel ke SDA OLED & LCD)* |
+| **Bus I2C SCL (OLED + LCD)** | **GPIO22 (D22)** *(paralel ke SCL OLED & LCD)* |
+| DHT11 DATA | **GPIO23 (D23)** *(aman bootloader)* |
+| PIR digital OUT | **GPIO27 (D27)** *(logika digital 3,3 V)* |
+| Buzzer | **GPIO25 (D25)** |
 
 Pin digital OUT PIR mengeluarkan sinyal logika 3,3 V (HIGH = gerak terdeteksi, LOW = diam) yang aman dibaca langsung oleh GPIO ESP32 tanpa memerlukan konversi analog ADC yang rumit.
 
@@ -372,21 +368,26 @@ Rancangan umum:
 
 Periksa polaritas sebelum menyalakan. Gunakan kabel daya yang sesuai dan sambungan yang tidak mudah lepas. Jangan menghubungkan dua sumber tegangan positif secara sembarangan.
 
-### 8.3 HC-SR04
+### 8.3 Dual Display I2C (OLED SSD1306 & LCD 16x2 PCF8574)
 
-- VCC → 5 V sesuai spesifikasi modul.
-- GND → GND.
-- TRIG → GPIO23.
-- ECHO → GPIO32 **melalui pembagi tegangan** agar sinyal 5 V turun ke level yang aman bagi ESP32.
-
-Contoh pembagi tegangan harus dihitung berdasarkan resistor yang tersedia dan tegangan aktual. Jangan sambungkan ECHO 5 V langsung ke GPIO ESP32.
+Kedua layar berbagi bus I2C yang sama pada **GPIO21 (SDA)** dan **GPIO22 (SCL)** dengan alamat berbeda:
+- **OLED 0.96" SSD1306 (`0x3C`):**
+  - VCC → **3V3 ESP32**
+  - GND → GND bersama
+  - SDA → GPIO21 (D21)
+  - SCL → GPIO22 (D22)
+- **LCD 16×2 I2C (`0x27` / `0x3F`):**
+  - VCC → **5V (`VIN` / Bus 5V)** *(Wajib 5V agar kontras & backlight terbaca jelas)*
+  - GND → GND bersama
+  - SDA → GPIO21 (D21)
+  - SCL → GPIO22 (D22)
 
 ### 8.4 DHT11
 
-- VCC → sesuai modul (sering 3,3–5 V, cek versi modul).
+- VCC → 3,3 V (pin `3V3` ESP32).
 - GND → GND.
-- DATA → GPIO4.
-- Modul DHT11 tertentu sudah memiliki resistor pull-up; periksa papan modul.
+- DATA → **GPIO23 (D23)**.
+- Modul DHT11 3-pin sudah dilengkapi resistor pull-up di papan modul.
 
 ### 8.5 Sensor PIR (Deteksi Gerak Pasif)
 
@@ -536,14 +537,14 @@ Jika memakai FastAPI, gunakan FastAPI dan Uvicorn sebagai alternatif; jangan men
 
 **Hasil tahap:** rangka dapat berdiri secara mekanis dengan gerakan sendi terbatas.
 
-### Tahap 5 — Tambahkan sensor
-1. Uji HC-SR04 dan pembagi tegangan ECHO.
-2. Uji DHT11.
-3. Uji Sensor PIR setelah waktu stabilisasi 20–30 detik (lambaikan tangan untuk memastikan pin OUT berubah menjadi HIGH).
-4. Bandingkan hasil sensor dengan kondisi lingkungan nyata.
+### Tahap 5 — Tambahkan sensor & dual display
+1. Uji deteksi alamat I2C OLED (`0x3C`) dan LCD 16×2 (`0x27`/`0x3F`) pada pin SDA=GPIO21, SCL=GPIO22.
+2. Uji DHT11 pada GPIO23.
+3. Uji Sensor PIR pada GPIO27 setelah waktu stabilisasi 20–30 detik (lambaikan tangan untuk memastikan pin OUT berubah menjadi HIGH).
+4. Pastikan teks suhu/kelembapan tampil jelas di LCD dan mata digital tampil di OLED.
 5. Tangani nilai sensor yang tidak valid atau pembacaan *noise*.
 
-**Hasil tahap:** data sensor dapat dibaca dan ditampilkan melalui serial monitor.
+**Hasil tahap:** data sensor terbaca di Serial Monitor serta tampil langsung di OLED dan LCD 16×2.
 
 ### Tahap 6 — Buat pola gerak
 1. Implementasikan `stand()`.
@@ -557,11 +558,10 @@ Jika memakai FastAPI, gunakan FastAPI dan Uvicorn sebagai alternatif; jangan men
 **Hasil tahap:** gerak dasar yang dapat diulang, meskipun mungkin belum halus.
 
 ### Tahap 7 — Tambahkan aturan keselamatan
-1. Jika jarak tidak valid, jangan izinkan gerak maju otomatis.
-2. Jika jarak di bawah ambang, tolak perintah maju.
-3. Jika kontrol tidak diperbarui melewati timeout, berhenti.
-4. Tambahkan tombol berhenti yang mengalahkan semua perintah gerak.
-5. Uji kondisi kehilangan Wi-Fi.
+1. Jika kontrol tidak diperbarui melewati timeout (`TIMEOUT_SAFETY_MS`), berhenti otomatis.
+2. Tambahkan tombol darurat `E-STOP` yang mengalahkan semua perintah gerak.
+3. Aktifkan peringatan buzzer & mata `ALERT` saat PIR mendeteksi gerakan.
+4. Uji kondisi kehilangan Wi-Fi saat robot sedang berjalan.
 
 **Hasil tahap:** robot berhenti dengan aman pada kondisi yang ditentukan.
 
@@ -965,11 +965,11 @@ Data pada contoh payload bersifat ilustratif.
 | T01 | ESP32 hidup | Nyalakan board dan buka serial monitor | Tidak reset berulang |
 | T02 | Satu servo | Gerakkan pada rentang sudut kecil | Gerak konsisten, tidak panas |
 | T03 | Delapan servo | Uji satu per satu lalu kombinasi | Tidak terjadi drop daya berulang |
-| T04 | HC-SR04 | Bandingkan jarak pada beberapa posisi | Pembacaan masuk akal dan invalid terdeteksi |
+| T04 | Dual Display OLED + LCD | Cek koneksi SDA=G21 & SCL=G22 pada I2C | OLED (`0x3C`) menampilkan mata & LCD (`0x27`/`0x3F`) menampilkan suhu/PIR |
 | T05 | DHT11 | Baca beberapa kali | Nilai valid dan pembacaan gagal ditangani |
 | T06 | Sensor PIR | Beri waktu settling 20-30 detik, uji lambaian tangan | Logika 1 (gerakan) dan 0 (diam) terbaca benar |
 | T07 | Stop darurat | Tekan stop saat robot bergerak | Gerakan dihentikan secepat desain memungkinkan |
-| T08 | Halangan | Letakkan objek di depan robot | Perintah maju ditolak pada ambang yang ditetapkan |
+| T08 | Sinkronisasi OLED | Kirim perintah WAVE, LEFT, RIGHT, CROUCH | Ekspresi mata OLED & Mirror di dashboard ikut berubah |
 | T09 | Wi-Fi terputus | Putuskan koneksi saat bergerak | Timeout lokal menghentikan gerakan |
 | T10 | Browser | Kirim setiap perintah | Status perintah terlihat |
 | T11 | Blynk | Kirim perintah dan cek telemetri | Perintah dan data tersinkron |
@@ -1017,10 +1017,14 @@ Salin tabel ini ke `docs/test_results.md` dan isi setelah pengujian:
 
 **Langkah:** matikan daya, lepaskan beban mekanik, cek horn, kalibrasi ulang, dan kurangi beban.
 
-### 18.3 HC-SR04 membaca nilai aneh
-**Kemungkinan:** objek miring/menyerap suara, kabel, catu daya, atau waktu tunggu pembacaan tidak tepat.
+### 18.3 OLED atau LCD 16x2 I2C tidak menyala / tulisan kosong
+**Kemungkinan:** kabel SDA/SCL tertukar, tegangan LCD kurang dari 5V, atau trimpot kontras LCD belum diputar.
 
-**Langkah:** uji pada objek datar, beberapa jarak, dan tangani timeout sebagai pembacaan tidak valid.
+**Langkah:**
+1. Pastikan **SDA $\rightarrow$ GPIO21** dan **SCL $\rightarrow$ GPIO22**.
+2. Pastikan **LCD VCC ke 5V (`VIN`)**, sedangkan **OLED VCC ke `3V3`**.
+3. Jika LCD menyala tapi kosong/kotak penuh, putar **trimpot biru** di belakang modul I2C LCD menggunakan obeng kecil.
+4. Cek Serial Monitor apakah alamat I2C terdeteksi (`0x3C` dan `0x27`/`0x3F`).
 
 ### 18.4 Sensor PIR sering memicu sinyal palsu (false trigger)
 **Kemungkinan:** guncangan mekanik robot saat berjalan, modul belum selesai *settling time*, sensitivitas trimpot terlalu tinggi, atau terkena paparan cahaya matahari langsung/sumber panas internal.
@@ -1081,8 +1085,9 @@ Jangan menambahkan banyak fitur sekaligus. Stabilkan sistem dasar sebelum memper
 - [ ] Semua servo diuji secara bertahap.
 - [ ] Catu daya servo diuji.
 - [ ] Ground bersama dipastikan.
-- [ ] ECHO HC-SR04 menggunakan pembagi tegangan.
-- [ ] Sinyal digital OUT PIR terhubung ke GPIO (level logika 3,3 V dipastikan aman).
+- [ ] Jalur I2C OLED + LCD paralel terhubung ke GPIO21 (SDA) dan GPIO22 (SCL).
+- [ ] Servo RR dipindah ke GPIO4 (D4) & GPIO26 (D26).
+- [ ] Sinyal digital OUT PIR terhubung ke GPIO27 (level logika 3,3 V dipastikan aman).
 - [ ] Tidak ada kabel terbuka atau polaritas terbalik.
 
 ### Mekanik
@@ -1096,8 +1101,8 @@ Jangan menambahkan banyak fitur sekaligus. Stabilkan sistem dasar sebelum memper
 - [ ] Sensor terbaca.
 - [ ] Fungsi stop bekerja.
 - [ ] Timeout koneksi bekerja.
-- [ ] Halangan dapat memblokir perintah maju.
-- [ ] Browser dapat mengendalikan robot.
+- [ ] OLED menampilkan ekspresi wajah robot & LCD menampilkan suhu/PIR.
+- [ ] Browser dapat mengendalikan robot & mencerminkan layar OLED/LCD.
 - [ ] Blynk dapat memantau dan mengirim perintah.
 
 ### AI dan otomatisasi
